@@ -9,7 +9,7 @@ all: $(MODULE)
 HEADERS=
 
 $(MODULE): convolution.cu $(HEADERS)
-	$(NVCC) $^ $(CFLAGS) -o $@ -DNx=32 -DNy=32 -DKx=3 -DKy=3 -DNi=768 -DNn=512
+	$(NVCC) $^ $(CFLAGS) -o $@ -DNx=32 -DNy=32 -DKx=3 -DKy=3 -DNi=30 -DNn=30
 
 clean:
 	rm -f $(MODULE)

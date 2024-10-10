@@ -15,9 +15,9 @@ V100_MAX_THREADS_PER_BLOCK 1024
 #include <string>
 #include <cmath>
 
-#define Pad 3
-#define StrideX 4
-#define StrideY 4
+#define Pad 1
+#define StrideX 1
+#define StrideY 1
 #define NxPad (Nx + (2*Pad))
 #define NyPad (Ny + (2*Pad))
 #define Ox (((Nx - Kx + 2*Pad) / StrideX) + 1)
@@ -39,7 +39,7 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort =
     }
 }
 
-__global__ void convolution();
+__global__ void conv_2d();
 
 __host__ void randomizeFilters();
 __host__ void randomizeInput();
@@ -60,28 +60,13 @@ float h_output_cpu[Nn][Oy][Ox];
 int main(int argc, char **argv) {
     bool DEBUG = ((argc > 1) && (std::string(argv[1]) == "--debug"));
 
-    dim3 blocksPerGrid(Ox, Oy, Nn);
-    dim3 threadsPerBlock(Kx, Ky, 64);
+    dim3 blocksPerGrid(Ox, Oy, 1);
+    dim3 threadsPerBlock(1, 1, Nn);
 
     // Randomize inputs/filters and set padded regions to 0
     randomizeFilters();
     randomizeInput();
     padInput();
-
-    if (DEBUG) {
-        printParameters();
-        printf("\n\n");
-        printf("Blocks-Per-Grid: (%d, %d, %d)\n", blocksPerGrid.x, blocksPerGrid.y, blocksPerGrid.z);
-        printf("Threads-Per-Block: (%d, %d, %d)\n\n\n", threadsPerBlock.x, threadsPerBlock.y, threadsPerBlock.z);
-
-        int nonZero = 0;
-        for (auto & nn : h_output)
-            for (auto & oy : nn)
-                for (float ox : oy)
-                    if (ox != 0)
-                        nonZero++;
-        printf("Number of non-zero elements in h_output: %d\n", nonZero);
-    }
 
     // Copy filters and input : host -> device
     gpuErrchk(cudaMemcpyToSymbol(d_input, h_input, I_MEM_SIZE));
@@ -92,7 +77,7 @@ int main(int argc, char **argv) {
     cudaStream_t stream;
     cudaStreamCreate(&stream);
 
-    convolution<<<blocksPerGrid, threadsPerBlock, 0, stream>>>();
+    conv_2d<<<blocksPerGrid, threadsPerBlock, 0, stream>>>();
 
     gpuErrchk(cudaDeviceSynchronize());
 
@@ -101,13 +86,6 @@ int main(int argc, char **argv) {
 
     // Check output
     if (DEBUG) {
-        int nonZero = 0;
-        for (auto & nn : h_output)
-            for (auto & oy : nn)
-                for (float ox : oy)
-                    if (ox != 0)
-                        nonZero++;
-        printf("Number of non-zero elements in h_output: %d\n", nonZero);
         convolution_cpu();
         checkOutput();
     }
@@ -116,38 +94,34 @@ int main(int argc, char **argv) {
 }
 
 __global__
-void convolution() {
-    unsigned int ox = blockIdx.x;
-    unsigned int oy = blockIdx.y;
-    unsigned int nn = blockIdx.z;
-    unsigned int kx = threadIdx.x;
-    unsigned int ky = threadIdx.y;
-    unsigned int ni = threadIdx.z;
+void conv_2d() {
+    unsigned int col = blockIdx.x;
+    unsigned int row = blockIdx.y;
 
-    __shared__ float sum[Ni];
-    float value;
+    unsigned int output_channel = threadIdx.z;
+    
 
-    // Use the first thread of each block to set accum. to 0
-    if (kx == 0 && ky == 0 && ni == 0)
+    __shared__ float input_cache[Ni][Ky][Kx];
+
+    if (output_channel == 0) {
         for (int i = 0; i < Ni; i++)
-            sum[i] = 0;
-
-    // Wait until accum. is initialized
-    __syncthreads();
-
-    // Multiply-Accumulate
-    for (int in_chunk = 0; in_chunk < Ni / 64; in_chunk++) {
-        value = d_input[in_chunk * 64 + ni][oy*StrideY + ky][ox*StrideX + kx] * d_filters[nn][in_chunk * 64 + ni][ky][kx];
-        atomicAdd(&sum[in_chunk * 64 + ni], value);
-    }
+            for (int y = 0; y < Ky; y++)
+                for (int x = 0; x < Kx; x++)
+                    input_cache[i][y][x] = d_input[i][row * StrideY + y][col * StrideX + x];
+    } 
 
     __syncthreads();
 
-    // Store results
-    if (kx == 0 && ky == 0)
-        for (int in_chunk = 0; in_chunk < Ni / 64; in_chunk++) {
-            atomicAdd(&d_output[nn][oy][ox], sum[in_chunk * 64 + ni]);
-        }
+    float sum = 0.0f;
+
+    for (int i = 0; i < Ni; i++)
+        for (int y = 0; y < Ky; y++)
+            for (int x = 0; x < Kx; x++)
+                sum += input_cache[i][y][x] * d_filters[output_channel][i][y][x];
+
+    d_output[output_channel][row][col] = sum;
+
+
 }
 
 __host__
