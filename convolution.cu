@@ -1,23 +1,9 @@
-/*
-V100_CUDA_CAP 7.0
-V100_GLOBAL_MEM_TOTAL 12621381632
-V100_SM_COUNT 80
-V100_CUDA_CORES_PER_SM 64
-V100_CUDA_CORES_TOTAL 5120
-V100_L2_SIZE 4718592
-V100_SH_MEM_PER_BLOCK 49152
-V100_REGS_PER_BLOCK 65536
-V100_WARP_SIZE 32
-V100_MAX_THREADS_PER_SM 2048
-V100_MAX_THREADS_PER_BLOCK 1024
- */
-
 #include <string>
 #include <cmath>
 
-#define Pad 1
-#define StrideX 1
-#define StrideY 1
+#define Pad 3
+#define StrideX 4
+#define StrideY 4
 #define NxPad (Nx + (2*Pad))
 #define NyPad (Ny + (2*Pad))
 #define Ox (((Nx - Kx + 2*Pad) / StrideX) + 1)
@@ -29,6 +15,8 @@ V100_MAX_THREADS_PER_BLOCK 1024
 #define O_MEM_SIZE (O_SIZE * sizeof(float))
 #define F_MEM_SIZE (F_SIZE * sizeof(float))
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+#define TILE_SIZE 8
+#define CHANNEL_SIZE 16
 
 using namespace std;
 
@@ -61,7 +49,6 @@ int main(int argc, char **argv) {
     bool DEBUG = ((argc > 1) && (std::string(argv[1]) == "--debug"));
 
     dim3 blocksPerGrid(Ox, Oy, 1);
-    dim3 threadsPerBlock(1, 1, Nn);
 
     // Randomize inputs/filters and set padded regions to 0
     randomizeFilters();
@@ -77,7 +64,7 @@ int main(int argc, char **argv) {
     cudaStream_t stream;
     cudaStreamCreate(&stream);
 
-    conv_2d<<<blocksPerGrid, threadsPerBlock, 0, stream>>>();
+    conv_2d<<<blocksPerGrid, Nn, 0, stream>>>();
 
     gpuErrchk(cudaDeviceSynchronize());
 
@@ -98,7 +85,7 @@ void conv_2d() {
     unsigned int col = blockIdx.x;
     unsigned int row = blockIdx.y;
 
-    unsigned int output_channel = threadIdx.z;
+    unsigned int output_channel = threadIdx.x;
     
 
     __shared__ float input_cache[Ni][Ky][Kx];
