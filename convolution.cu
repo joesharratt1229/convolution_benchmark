@@ -117,8 +117,11 @@ void conv_2d(float d_input[Ni][NyPad][NxPad], float d_filters[Nn][Ni][Ky][Kx], f
     float sum = 0.0f;
 
     if (row < Oy && col < Ox && output_channel < Nn) {
+        #pragma unroll
         for (int i = 0; i < Ni; i++)
+            #pragma unroll
             for (int y = 0; y < Ky; y++)
+                #pragma unroll
                 for (int x = 0; x < Kx; x++) {
                     sum += input_cache[i][threadIdx.y * StrideY + y][threadIdx.x * StrideX + x] * d_filters[output_channel][i][y][x];
                 }
