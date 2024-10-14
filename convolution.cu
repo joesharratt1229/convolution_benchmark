@@ -106,8 +106,8 @@ void conv_2d(float d_input[Ni][NyPad][NxPad], float d_filters[Nn][Ni][Ky][Kx], f
 
     if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
         for (int i = 0; i < Ni; i++)
-            for (int y = 0; y < TILE_SIZE; y++)
-                for (int x = 0; x < TILE_SIZE; x++) {
+            for (int y = 0; y < INPUT_TILE_Y; y++)
+                for (int x = 0; x < INPUT_TILE_X; x++) {
                     input_cache[i][y][x] = d_input[i][row*StrideY + y][col*StrideX + x];
                 }
     } 
@@ -119,9 +119,9 @@ void conv_2d(float d_input[Ni][NyPad][NxPad], float d_filters[Nn][Ni][Ky][Kx], f
     if (row < Oy && col < Ox && output_channel < Nn) {
         for (int i = 0; i < Ni; i++)
             for (int y = 0; y < Ky; y++)
-            for (int x = 0; x < Kx; x++) {
-                sum += input_cache[i][y][x] * d_filters[output_channel][i][y][x];
-            }
+                for (int x = 0; x < Kx; x++) {
+                    sum += input_cache[i][threadIdx.y * StrideY + y][threadIdx.x * StrideX + x] * d_filters[output_channel][i][y][x];
+                }
         d_output[output_channel][row][col] = sum;
     }
 }
