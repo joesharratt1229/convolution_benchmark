@@ -17,6 +17,8 @@
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 #define TILE_SIZE 8
 #define CHANNEL_SIZE 16
+#define INPUT_TILE_X (TILE_SIZE*StrideX + Kx - 1)
+#define INPUT_TILE_Y (TILE_SIZE*StrideY + Ky - 1)
 
 using namespace std;
 
@@ -27,92 +29,105 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort =
     }
 }
 
-__global__ void conv_2d();
+__global__ void conv_2d(float d_input[Ni][NyPad][NxPad], float d_filters[Nn][Ni][Ky][Kx], float d_output[Nn][Oy][Ox]);
 
-__host__ void randomizeFilters();
-__host__ void randomizeInput();
-__host__ void padInput();
+__host__ void randomizeFilters(float h_filters[Nn][Ni][Ky][Kx]);
+__host__ void randomizeInput(float h_input[Ni][NyPad][NxPad]);
+__host__ void padInput(float h_input[Ni][NyPad][NxPad]);
 __host__ void printParameters();
-__host__ void convolution_cpu();
-__host__ void checkOutput();
+__host__ void convolution_cpu(float h_input[Ni][NyPad][NxPad], float h_filters[Nn][Ni][Ky][Kx], float h_output_cpu[Nn][Oy][Ox]);
+__host__ void checkOutput(float h_output[Nn][Oy][Ox], float h_output_cpu[Nn][Oy][Ox]);
 
-__device__ float d_input[Ni][NyPad][NxPad];
-__device__ float d_output[Nn][Oy][Ox];
-__device__ float d_filters[Nn][Ni][Ky][Kx];
 
-float h_input[Ni][NyPad][NxPad];
-float h_output[Nn][Oy][Ox];
-float h_filters[Nn][Ni][Ky][Kx];
-float h_output_cpu[Nn][Oy][Ox];
 
 int main(int argc, char **argv) {
     bool DEBUG = ((argc > 1) && (std::string(argv[1]) == "--debug"));
 
-    dim3 blocksPerGrid(Ox, Oy, 1);
+    dim3 threadsPerBlock(TILE_SIZE, TILE_SIZE, CHANNEL_SIZE);
+    dim3 blocksPerGrid((Ox + threadsPerBlock.x - 1) / threadsPerBlock.x,
+                       (Oy + threadsPerBlock.y - 1) / threadsPerBlock.y,
+                       (Nn + threadsPerBlock.z - 1) / threadsPerBlock.z);
+
+
+    static float h_input[Ni][NyPad][NxPad];
+    static float h_output[Nn][Oy][Ox];
+    static float h_output_cpu[Nn][Oy][Ox];
+    static float h_filters[Nn][Ni][Ky][Kx]; 
+
+    float (*d_input)[NyPad][NxPad];
+    float (*d_output)[Oy][Ox];
+    float (*d_filters)[Ni][Ky][Kx];
+
+
+    cudaMalloc((void**)&d_input, I_MEM_SIZE);
+    cudaMalloc((void**)&d_output, O_MEM_SIZE);
+    cudaMalloc((void**)&d_filters, F_MEM_SIZE);
+
 
     // Randomize inputs/filters and set padded regions to 0
-    randomizeFilters();
-    randomizeInput();
-    padInput();
+    randomizeFilters(h_filters);
+    randomizeInput(h_input);
+    padInput(h_input);
 
     // Copy filters and input : host -> device
-    gpuErrchk(cudaMemcpyToSymbol(d_input, h_input, I_MEM_SIZE));
-    gpuErrchk(cudaMemcpyToSymbol(d_filters, h_filters, F_MEM_SIZE));
+    gpuErrchk(cudaMemcpy(d_input, h_input, I_MEM_SIZE, cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(d_filters, h_filters, F_MEM_SIZE, cudaMemcpyHostToDevice));
 
 
     // Start timer and execute kernel
     cudaStream_t stream;
     cudaStreamCreate(&stream);
 
-    conv_2d<<<blocksPerGrid, Nn, 0, stream>>>();
+    conv_2d<<<blocksPerGrid, threadsPerBlock>>>(d_input, d_filters, d_output);
 
     gpuErrchk(cudaDeviceSynchronize());
 
     // Copy output : device -> host
-    gpuErrchk(cudaMemcpyFromSymbol(h_output, d_output, O_MEM_SIZE));
+    gpuErrchk(cudaMemcpy(h_output, d_output, O_MEM_SIZE, cudaMemcpyDeviceToHost));
 
     // Check output
     if (DEBUG) {
-        convolution_cpu();
-        checkOutput();
-    }
+        convolution_cpu(h_input, h_filters, h_output_cpu);
+        checkOutput(h_output, h_output_cpu);
+    } 
 
     return 0;
-}
+} 
+
+
 
 __global__
-void conv_2d() {
-    unsigned int col = blockIdx.x;
-    unsigned int row = blockIdx.y;
+void conv_2d(float d_input[Ni][NyPad][NxPad], float d_filters[Nn][Ni][Ky][Kx], float d_output[Nn][Oy][Ox]) {
+    unsigned int col = blockIdx.x * TILE_SIZE + threadIdx.x;
+    unsigned int row = blockIdx.y * TILE_SIZE + threadIdx.y;
+    unsigned int output_channel = blockIdx.z * CHANNEL_SIZE + threadIdx.z;
 
-    unsigned int output_channel = threadIdx.x;
-    
+    __shared__ float input_cache[Ni][INPUT_TILE_Y][INPUT_TILE_X];
 
-    __shared__ float input_cache[Ni][Ky][Kx];
-
-    if (output_channel == 0) {
+    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
         for (int i = 0; i < Ni; i++)
-            for (int y = 0; y < Ky; y++)
-                for (int x = 0; x < Kx; x++)
-                    input_cache[i][y][x] = d_input[i][row * StrideY + y][col * StrideX + x];
+            for (int y = 0; y < TILE_SIZE; y++)
+                for (int x = 0; x < TILE_SIZE; x++) {
+                    input_cache[i][y][x] = d_input[i][row*StrideY + y][col*StrideX + x];
+                }
     } 
 
     __syncthreads();
 
     float sum = 0.0f;
 
-    for (int i = 0; i < Ni; i++)
-        for (int y = 0; y < Ky; y++)
-            for (int x = 0; x < Kx; x++)
+    if (row < Oy && col < Ox && output_channel < Nn) {
+        for (int i = 0; i < Ni; i++)
+            for (int y = 0; y < Ky; y++)
+            for (int x = 0; x < Kx; x++) {
                 sum += input_cache[i][y][x] * d_filters[output_channel][i][y][x];
-
-    d_output[output_channel][row][col] = sum;
-
-
+            }
+        d_output[output_channel][row][col] = sum;
+    }
 }
 
 __host__
-void randomizeFilters() {
+void randomizeFilters(float h_filters[Nn][Ni][Ky][Kx]) {
     for (int yy = 0; yy < Ky; ++yy)
         for (int xx = 0; xx < Kx; ++xx)
             for (int nn = 0; nn < Nn; ++nn)
@@ -121,7 +136,7 @@ void randomizeFilters() {
 }
 
 __host__
-void randomizeInput() {
+void randomizeInput(float h_input[Ni][NyPad][NxPad]) {
     for (int ni = 0; ni < Ni; ++ni)
         for (int yy = 0; yy < NyPad; ++yy)
             for (int xx = 0; xx < NxPad; ++xx)
@@ -129,7 +144,7 @@ void randomizeInput() {
 }
 
 __host__
-void padInput() {
+void padInput(float h_input[Ni][NyPad][NxPad]) {
     // Set padded regions to 0
     for (int z = 0; z < Ni; z++) {
             for (int x = 0; x < NxPad; x++) {
@@ -170,7 +185,7 @@ void printParameters() {
 
 
 __host__
-void convolution_cpu() {
+void convolution_cpu(float h_input[Ni][NyPad][NxPad], float h_filters[Nn][Ni][Ky][Kx], float h_output_cpu[Nn][Oy][Ox]) {
     for (int nn = 0; nn < Nn; ++nn) {
         for (int oy = 0; oy < Oy; ++oy) {
             for (int ox = 0; ox < Ox; ++ox) {
@@ -192,7 +207,7 @@ void convolution_cpu() {
 
 
 __host__
-void checkOutput() {
+void checkOutput(float h_output[Nn][Oy][Ox], float h_output_cpu[Nn][Oy][Ox]) {
     for (int nn = 0; nn < Nn; ++nn) {
         for (int oy = 0; oy < Oy; ++oy) {
             for (int ox = 0; ox < Ox; ++ox) {
