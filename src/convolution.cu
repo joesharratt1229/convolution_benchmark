@@ -51,7 +51,7 @@ __host__ void checkOutput(T h_output[Nn][Oy][Ox], T h_output_cpu[Nn][Oy][Ox]);
 int main(int argc, char **argv) {
     bool DEBUG = ((argc > 1) && (std::string(argv[1]) == "--debug"));
 
-    unsigned int Ox2 = (Ox + 3) / 4;
+    unsigned int Ox2 = (Ox + 1) / 2;
 
     dim3 threadsPerBlock(TILE_SIZE, TILE_SIZE, CHANNEL_SIZE);
     dim3 blocksPerGrid((Ox2 + threadsPerBlock.x - 1) / threadsPerBlock.x,
@@ -110,37 +110,36 @@ int main(int argc, char **argv) {
 template<typename T>
 __global__
 void conv_2d(T d_input[Ni][NyPad][NxPad], T d_filters[Nn][Ni][Ky][Kx], T d_output[Nn][Oy][Ox]) {
-    unsigned int col = 4*(blockIdx.x * TILE_SIZE + threadIdx.x);
+    unsigned int col = 2*(blockIdx.x * TILE_SIZE + threadIdx.x);
     unsigned int row = blockIdx.y * TILE_SIZE + threadIdx.y;
     unsigned int output_channel = blockIdx.z * CHANNEL_SIZE + threadIdx.z;
 
-    __shared__ T input_cache[Ni][INPUT_TILE_Y][INPUT_TILE_X*4];
+    __shared__ T input_cache[Ni][INPUT_TILE_Y][INPUT_TILE_X*2];
 
     if (threadIdx.z < Ni && StrideY * threadIdx.y < INPUT_TILE_Y && StrideX * threadIdx.x < INPUT_TILE_X) {
         if (threadIdx.y < TILE_SIZE - 1)
             for (int y = 0; y < StrideY; y++)
                 if (threadIdx.x < TILE_SIZE - 1)
-                    for (int x = 0; x < 4* StrideX; x++) 
-                        input_cache[threadIdx.z][StrideY * threadIdx.y + y][4*StrideX * threadIdx.x + x] = d_input[threadIdx.z][row*StrideY + y][col*StrideX + x];
+                    for (int x = 0; x < 2* StrideX; x++) 
+                        input_cache[threadIdx.z][StrideY * threadIdx.y + y][2*StrideX * threadIdx.x + x] = d_input[threadIdx.z][row*StrideY + y][col*StrideX + x];
                 else
-                    for (int x = 0; x < 4* StrideX + Kx - 1; x++) 
-                        input_cache[threadIdx.z][StrideY * threadIdx.y + y][4*StrideX * threadIdx.x + x] = d_input[threadIdx.z][row*StrideY + y][col*StrideX + x];
+                    for (int x = 0; x < 2* StrideX + Kx - 1; x++) 
+                        input_cache[threadIdx.z][StrideY * threadIdx.y + y][2*StrideX * threadIdx.x + x] = d_input[threadIdx.z][row*StrideY + y][col*StrideX + x];
         else 
             for (int y = 0; y < StrideY + Ky - 1; y++)
                 if (threadIdx.x < TILE_SIZE - 1)
-                    for (int x = 0; x < 4* StrideX; x++) 
-                        input_cache[threadIdx.z][StrideY * threadIdx.y + y][4*StrideX * threadIdx.x + x] = d_input[threadIdx.z][row*StrideY + y][col*StrideX + x];
+                    for (int x = 0; x < 2* StrideX; x++) 
+                        input_cache[threadIdx.z][StrideY * threadIdx.y + y][2*StrideX * threadIdx.x + x] = d_input[threadIdx.z][row*StrideY + y][col*StrideX + x];
                 else
-                    for (int x = 0; x < 4* StrideX + Kx - 1; x++) 
-                        input_cache[threadIdx.z][StrideY * threadIdx.y + y][4*StrideX * threadIdx.x + x] = d_input[threadIdx.z][row*StrideY + y][col*StrideX + x];
+                    for (int x = 0; x < 2* StrideX + Kx - 1; x++) 
+                        input_cache[threadIdx.z][StrideY * threadIdx.y + y][2*StrideX * threadIdx.x + x] = d_input[threadIdx.z][row*StrideY + y][col*StrideX + x];
     }
+
 
     __syncthreads();
 
     T sum1 = 0.0f;
     T sum2 = 0.0f;
-    T sum3 = 0.0f;
-    T sum4 = 0.0f;
 
     if (row < Oy && output_channel < Nn) {
         #pragma unroll
@@ -150,10 +149,8 @@ void conv_2d(T d_input[Ni][NyPad][NxPad], T d_filters[Nn][Ni][Ky][Kx], T d_outpu
                 #pragma unroll
                 for (int x = 0; x < Kx; x++) {
                     T filter_val = d_filters[output_channel][i][y][x];
-                    sum1 += input_cache[i][threadIdx.y * StrideY + y][(4*threadIdx.x) * StrideX + x] * filter_val;
-                    sum2 += input_cache[i][threadIdx.y * StrideY + y][(4*threadIdx.x+1) * StrideX + x] * filter_val;
-                    sum3 += input_cache[i][threadIdx.y * StrideY + y][(4*threadIdx.x+2) * StrideX + x] * filter_val;
-                    sum4 += input_cache[i][threadIdx.y * StrideY + y][(4*threadIdx.x+3) * StrideX + x] * filter_val;
+                    sum1 += input_cache[i][threadIdx.y * StrideY + y][(2*threadIdx.x) * StrideX + x] * filter_val;
+                    sum2 += input_cache[i][threadIdx.y * StrideY + y][(2*threadIdx.x+1) * StrideX + x] * filter_val;
 
                 }
         
@@ -162,12 +159,6 @@ void conv_2d(T d_input[Ni][NyPad][NxPad], T d_filters[Nn][Ni][Ky][Kx], T d_outpu
         }
         if (col+1 < Ox) {
             d_output[output_channel][row][col+1] = sum2;
-        }
-        if (col+2 < Ox) {
-            d_output[output_channel][row][col+2] = sum3;
-        }
-        if (col+3 < Ox) {
-            d_output[output_channel][row][col+3] = sum4;
         }
     }
 }
