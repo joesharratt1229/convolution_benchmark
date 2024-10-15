@@ -29,7 +29,9 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort =
     }
 }
 
-__global__ void conv_2d(float d_input[Ni][NyPad][NxPad], float d_filters[Nn][Ni][Ky][Kx], float d_output[Nn][Oy][Ox]);
+
+template<typename T>
+__global__ void conv_2d(T d_input[Ni][NyPad][NxPad], T d_filters[Nn][Ni][Ky][Kx], T d_output[Nn][Oy][Ox]);
 
 __host__ void randomizeFilters(float h_filters[Nn][Ni][Ky][Kx]);
 __host__ void randomizeInput(float h_input[Ni][NyPad][NxPad]);
@@ -79,6 +81,7 @@ int main(int argc, char **argv) {
     cudaStream_t stream;
     cudaStreamCreate(&stream);
 
+
     conv_2d<<<blocksPerGrid, threadsPerBlock>>>(d_input, d_filters, d_output);
 
     gpuErrchk(cudaDeviceSynchronize());
@@ -97,8 +100,9 @@ int main(int argc, char **argv) {
 
 
 
+template<typename T>
 __global__
-void conv_2d(float d_input[Ni][NyPad][NxPad], float d_filters[Nn][Ni][Ky][Kx], float d_output[Nn][Oy][Ox]) {
+void conv_2d(T d_input[Ni][NyPad][NxPad], T d_filters[Nn][Ni][Ky][Kx], T d_output[Nn][Oy][Ox]) {
     unsigned int col = 2*(blockIdx.x * TILE_SIZE + threadIdx.x);
     unsigned int row = blockIdx.y * TILE_SIZE + threadIdx.y;
     unsigned int output_channel = blockIdx.z * CHANNEL_SIZE + threadIdx.z;
