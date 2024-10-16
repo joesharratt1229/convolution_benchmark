@@ -38,3 +38,13 @@ __device__ __inline__ T cubic_upsample_1d(T x_coord, T y_coord, T neighbour_coor
 }
 
 
+template <typename T>
+__global__ void bicubic_interpolation_kernel(T* input, T* output, int pos_embed_spatial_size) {
+    int output_col = blockIdx.x * blockDim.x + threadIdx.x;
+    int output_row = blockIdx.y * blockDim.y + threadIdx.y;
+
+    T x_coord = output_col/pos_embed_spatial_size;
+    T y_coord = output_row/pos_embed_spatial_size;
+
+    
+}
