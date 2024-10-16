@@ -2,25 +2,7 @@
 #include <cmath>
 
 #include "common.h" 
-
-#define Pad 3
-#define StrideX 4
-#define StrideY 4
-#define NxPad (Nx + (2*Pad))
-#define NyPad (Ny + (2*Pad))
-#define Ox (((Nx - Kx + 2*Pad) / StrideX) + 1)
-#define Oy (((Ny - Ky + 2*Pad) / StrideY) + 1)
-#define I_SIZE (Ni * NyPad * NxPad)
-#define O_SIZE (Nn * Oy * Ox)
-#define F_SIZE (Nn * Ni * Ky * Kx)
-#define I_MEM_SIZE (I_SIZE * sizeof(floatT))
-#define O_MEM_SIZE (O_SIZE * sizeof(floatT))
-#define F_MEM_SIZE (F_SIZE * sizeof(floatT))
-#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
-#define TILE_SIZE 8
-#define CHANNEL_SIZE 16
-#define INPUT_TILE_X (TILE_SIZE*StrideX + Kx - 1)   
-#define INPUT_TILE_Y (TILE_SIZE*StrideY + Ky - 1)
+#include "convolution.cuh"
 
 using namespace std;
 
@@ -33,8 +15,6 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort =
 
 
 template<typename T>
-__global__ void conv_2d(T d_input[Ni][NyPad][NxPad], T d_filters[Nn][Ni][Ky][Kx], T d_output[Nn][Oy][Ox]);
-template<typename T>
 __host__ void randomizeFilters(T h_filters[Nn][Ni][Ky][Kx]);
 template<typename T>
 __host__ void randomizeInput(T h_input[Ni][NyPad][NxPad]);
@@ -45,7 +25,7 @@ __host__ void printParameters();
 template<typename T>
 __host__ void convolution_cpu(T h_input[Ni][NyPad][NxPad], T h_filters[Nn][Ni][Ky][Kx], T h_output_cpu[Nn][Oy][Ox]);
 template<typename T>
-__host__ void checkOutput(T h_output[Nn][Oy][Ox], T h_output_cpu[Nn][Oy][Ox]);
+__host__ void checkOutput(T *h_output, T *h_output_cpu, unsigned int total_size);
 
 
 int main(int argc, char **argv) {
@@ -99,69 +79,12 @@ int main(int argc, char **argv) {
     // Check output
     if (DEBUG) {
         convolution_cpu(h_input, h_filters, h_output_cpu);
-        checkOutput(h_output, h_output_cpu);
+        checkOutput(&h_output[0][0][0], &h_output_cpu[0][0][0], Ox * Oy * Nn);
     } 
 
     return 0;
 } 
 
-
-
-template<typename T>
-__global__
-void conv_2d(T d_input[Ni][NyPad][NxPad], T d_filters[Nn][Ni][Ky][Kx], T d_output[Nn][Oy][Ox]) {
-    unsigned int col = 2*(blockIdx.x * TILE_SIZE + threadIdx.x);
-    unsigned int row = blockIdx.y * TILE_SIZE + threadIdx.y;
-    unsigned int output_channel = blockIdx.z * CHANNEL_SIZE + threadIdx.z;
-
-    __shared__ T input_cache[Ni][INPUT_TILE_Y][INPUT_TILE_X*2];
-
-    if (threadIdx.z < Ni && StrideY * threadIdx.y < INPUT_TILE_Y && StrideX * threadIdx.x < INPUT_TILE_X) {
-        if (threadIdx.y < TILE_SIZE - 1)
-            for (int y = 0; y < StrideY; y++)
-                if (threadIdx.x < TILE_SIZE - 1)
-                    for (int x = 0; x < 2* StrideX; x++) 
-                        input_cache[threadIdx.z][StrideY * threadIdx.y + y][2*StrideX * threadIdx.x + x] = d_input[threadIdx.z][row*StrideY + y][col*StrideX + x];
-                else
-                    for (int x = 0; x < 2* StrideX + Kx - 1; x++) 
-                        input_cache[threadIdx.z][StrideY * threadIdx.y + y][2*StrideX * threadIdx.x + x] = d_input[threadIdx.z][row*StrideY + y][col*StrideX + x];
-        else 
-            for (int y = 0; y < StrideY + Ky - 1; y++)
-                if (threadIdx.x < TILE_SIZE - 1)
-                    for (int x = 0; x < 2* StrideX; x++) 
-                        input_cache[threadIdx.z][StrideY * threadIdx.y + y][2*StrideX * threadIdx.x + x] = d_input[threadIdx.z][row*StrideY + y][col*StrideX + x];
-                else
-                    for (int x = 0; x < 2* StrideX + Kx - 1; x++) 
-                        input_cache[threadIdx.z][StrideY * threadIdx.y + y][2*StrideX * threadIdx.x + x] = d_input[threadIdx.z][row*StrideY + y][col*StrideX + x];
-    }
-
-
-    __syncthreads();
-
-    T sum1 = 0.0f;
-    T sum2 = 0.0f;
-
-    if (row < Oy && output_channel < Nn) {
-        #pragma unroll
-        for (int i = 0; i < Ni; i++)
-            #pragma unroll
-            for (int y = 0; y < Ky; y++)
-                #pragma unroll
-                for (int x = 0; x < Kx; x++) {
-                    T filter_val = d_filters[output_channel][i][y][x];
-                    sum1 += input_cache[i][threadIdx.y * StrideY + y][(2*threadIdx.x) * StrideX + x] * filter_val;
-                    sum2 += input_cache[i][threadIdx.y * StrideY + y][(2*threadIdx.x+1) * StrideX + x] * filter_val;
-
-                }
-        
-        if (col < Ox) {
-            d_output[output_channel][row][col] = sum1;
-        }
-        if (col+1 < Ox) {
-            d_output[output_channel][row][col+1] = sum2;
-        }
-    }
-}
 
 template<typename T>
 __host__
@@ -251,17 +174,13 @@ void convolution_cpu(T h_input[Ni][NyPad][NxPad], T h_filters[Nn][Ni][Ky][Kx], T
 
 template<typename T>
 __host__
-void checkOutput(T h_output[Nn][Oy][Ox], T h_output_cpu[Nn][Oy][Ox]) {
-    for (int nn = 0; nn < Nn; ++nn) {
-        for (int oy = 0; oy < Oy; ++oy) {
-            for (int ox = 0; ox < Ox; ++ox) {
-                float gpu_val = static_cast<float>(h_output[nn][oy][ox]);
-                float cpu_val = static_cast<float>(h_output_cpu[nn][oy][ox]);
-                if (std::abs(gpu_val - cpu_val) > 1e-3) {
-                    printf("Mismatch at h_output[%d][%d][%d]: %f (CPU) vs %f (GPU)\n", nn, oy, ox, cpu_val, gpu_val);
-                    exit(1);
-                }
-            }
+void checkOutput(T *h_output, T *h_output_cpu, unsigned int total_size) {
+    for (int i = 0; i < total_size; i++) {
+        float gpu_val = static_cast<float>(h_output[i]);
+        float cpu_val = static_cast<float>(h_output_cpu[i]);
+        if (std::abs(gpu_val - cpu_val) > 1e-3) {
+            printf("Mismatch at h_output[%d]: %f (CPU) vs %f (GPU)\n", i, cpu_val, gpu_val);
+            exit(1);
         }
     }
 }
