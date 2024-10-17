@@ -19,7 +19,7 @@ debug: CFLAGS += $(DEBUGFLAGS)
 debug: $(MODULE)
 
 $(MODULE): $(SRCDIR)/main.cu $(HEADERS)
-	$(NVCC) $^ $(CFLAGS) $(REGFLAGS) $(NVFLAGS) $(INCFLAGS) -o $@ -DNx=2250 -DNy=1250 -DKx=7 -DKy=7 -DNi=3 -DNn=768 -DENABLE_FP32
+	$(NVCC) $^ $(CFLAGS) $(REGFLAGS) $(NVFLAGS) $(INCFLAGS) -o $@ -DNx=2250 -DNy=1250 -DKx=7 -DKy=7 -DNi=3 -DNn=16 -DENABLE_FP32
 
 
 debug_build: CFLAGS += $(DEBUGFLAGS)

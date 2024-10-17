@@ -4,19 +4,23 @@
 #include "utils/common.h" 
 #include "utils/convolution.cuh"
 #include "utils/upsample.cuh"
-#include "utils/cpu_utils.cpp"
+#include "utils/test_sam.cpp"
 
 using namespace std;
 
 
 template<typename T>
 __host__ void randomizeFilters(T h_filters[Nn][Ni][Ky][Kx]);
+
 template<typename T>
 __host__ void randomizeInput(T h_input[Ni][NyPad][NxPad]);
+
 template<typename T>
 __host__ void padInput(T h_input[Ni][NyPad][NxPad]);
+
 template<typename T>
 __host__ void printParameters();
+
 template<typename T>
 __host__
 void randomizePosEmbeddings(T h_pos_embeds[POS_EMBEDS][POS_EMBEDS]);
@@ -28,18 +32,26 @@ int main(int argc, char **argv) {
 
     static floatT h_input[Ni][NyPad][NxPad];
     static floatT h_output[Nn][Oy][Ox];
+    static floatT h_output_bicubic[Nn][Oy][Ox];
     static floatT h_output_cpu[Nn][Oy][Ox];
+    static floatT h_output_cpu_bicubic[Nn][Oy][Ox];
     static floatT h_filters[Nn][Ni][Ky][Kx]; 
     static floatT pos_embeds[POS_EMBEDS][POS_EMBEDS];
 
+    dims input_dims = {POS_EMBEDS, POS_EMBEDS, 1};
+    dims output_dims = {Ox, Oy, Nn};
     randomizeFilters(h_filters);
     randomizeInput(h_input);
     padInput(h_input);
+    randomizePosEmbeddings(pos_embeds);
+
     template_conv_2d(h_input, h_filters, h_output);
+    template_bicubic_upsample<floatT, POS_EMBEDS, Nn, Oy, Ox>(pos_embeds, h_output_bicubic, input_dims, output_dims);
 
     // Check output
     if (DEBUG) {
         convolution_cpu(h_input, h_filters, h_output_cpu);
+        bicubic_convolution_cpu(pos_embeds, NyPad, NxPad, h_output_cpu_bicubic);
         checkOutput(&h_output[0][0][0], &h_output_cpu[0][0][0], Ox * Oy * Nn);
     } 
 
@@ -117,3 +129,5 @@ void printParameters() {
     printf("Weights number of elements: %dx%dx%dx%d = %d\n", Kx, Ky, Ni, Nn, Kx * Ky * Ni * Nn);
     printf("Weights memory size: %lu bytes\n", F_MEM_SIZE);
 }
+
+

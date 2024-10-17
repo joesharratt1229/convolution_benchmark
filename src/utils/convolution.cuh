@@ -92,7 +92,6 @@ __host__ void template_conv_2d(T h_input[Ni][NyPad][NxPad], T h_filters[Nn][Ni][
 
 
     conv_2d_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_input, d_filters, d_output);
-
     gpuErrchk(cudaDeviceSynchronize());
 
     // Copy output : device -> host
