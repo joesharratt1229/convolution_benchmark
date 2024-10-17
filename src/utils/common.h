@@ -1,3 +1,6 @@
+#ifndef COMMON_H
+#define COMMON_H
+
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
 
@@ -20,6 +23,15 @@
 #define CHANNEL_SIZE 16
 #define INPUT_TILE_X (TILE_SIZE*StrideX + Kx - 1)   
 #define INPUT_TILE_Y (TILE_SIZE*StrideY + Ky - 1)
+#define POS_EMBEDS 14
+
+typedef struct {
+    int width;
+    int height;
+    int channel;
+} dims;
+
+
 
 
 #if defined(ENABLE_FP32)
@@ -30,3 +42,4 @@ typedef half floatT;
 typedef __nv_bfloat16 floatT;
 #endif
 
+#endif

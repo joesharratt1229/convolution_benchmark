@@ -1,17 +1,12 @@
 #include <string>
 #include <cmath>
 
-#include "common.h" 
-#include "convolution.cuh"
+#include "utils/common.h" 
+#include "utils/convolution.cuh"
+#include "utils/upsample.cuh"
+#include "utils/cpu_utils.cpp"
 
 using namespace std;
-
-inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true) {
-    if (code != cudaSuccess) {
-        fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
-        if (abort) exit(code);
-    }
-}
 
 
 template<typename T>
@@ -23,58 +18,24 @@ __host__ void padInput(T h_input[Ni][NyPad][NxPad]);
 template<typename T>
 __host__ void printParameters();
 template<typename T>
-__host__ void convolution_cpu(T h_input[Ni][NyPad][NxPad], T h_filters[Nn][Ni][Ky][Kx], T h_output_cpu[Nn][Oy][Ox]);
-template<typename T>
-__host__ void checkOutput(T *h_output, T *h_output_cpu, unsigned int total_size);
+__host__
+void randomizePosEmbeddings(T h_pos_embeds[POS_EMBEDS][POS_EMBEDS]);
 
 
 int main(int argc, char **argv) {
     bool DEBUG = ((argc > 1) && (std::string(argv[1]) == "--debug"));
-
-    unsigned int Ox2 = (Ox + 1) / 2;
-
-    dim3 threadsPerBlock(TILE_SIZE, TILE_SIZE, CHANNEL_SIZE);
-    dim3 blocksPerGrid((Ox2 + threadsPerBlock.x - 1) / threadsPerBlock.x,
-                       (Oy + threadsPerBlock.y - 1) / threadsPerBlock.y,
-                       (Nn + threadsPerBlock.z - 1) / threadsPerBlock.z);
 
 
     static floatT h_input[Ni][NyPad][NxPad];
     static floatT h_output[Nn][Oy][Ox];
     static floatT h_output_cpu[Nn][Oy][Ox];
     static floatT h_filters[Nn][Ni][Ky][Kx]; 
+    static floatT pos_embeds[POS_EMBEDS][POS_EMBEDS];
 
-    floatT (*d_input)[NyPad][NxPad];
-    floatT (*d_output)[Oy][Ox];
-    floatT (*d_filters)[Ni][Ky][Kx];
-
-
-    cudaMalloc((void**)&d_input, I_MEM_SIZE);
-    cudaMalloc((void**)&d_output, O_MEM_SIZE);
-    cudaMalloc((void**)&d_filters, F_MEM_SIZE);
-
-
-    // Randomize inputs/filters and set padded regions to 0
     randomizeFilters(h_filters);
     randomizeInput(h_input);
     padInput(h_input);
-
-    // Copy filters and input : host -> device
-    gpuErrchk(cudaMemcpy(d_input, h_input, I_MEM_SIZE, cudaMemcpyHostToDevice));
-    gpuErrchk(cudaMemcpy(d_filters, h_filters, F_MEM_SIZE, cudaMemcpyHostToDevice));
-
-
-    // Start timer and execute kernel
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
-
-
-    conv_2d<<<blocksPerGrid, threadsPerBlock>>>(d_input, d_filters, d_output);
-
-    gpuErrchk(cudaDeviceSynchronize());
-
-    // Copy output : device -> host
-    gpuErrchk(cudaMemcpy(h_output, d_output, O_MEM_SIZE, cudaMemcpyDeviceToHost));
+    template_conv_2d(h_input, h_filters, h_output);
 
     // Check output
     if (DEBUG) {
@@ -84,6 +45,16 @@ int main(int argc, char **argv) {
 
     return 0;
 } 
+
+
+
+template<typename T>
+__host__
+void randomizePosEmbeddings(T h_pos_embeds[POS_EMBEDS][POS_EMBEDS]) {
+    for (int yy = 0; yy < POS_EMBEDS; ++yy)
+        for (int xx = 0; xx < POS_EMBEDS; ++xx)
+            h_pos_embeds[yy][xx] = static_cast<T>(static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f);
+}
 
 
 template<typename T>
@@ -145,42 +116,4 @@ void printParameters() {
     printf("Weights dimensions (Kx, Ky, Ni, Nn): (%d, %d, %d, %d)\n", Kx, Ky, Ni, Nn);
     printf("Weights number of elements: %dx%dx%dx%d = %d\n", Kx, Ky, Ni, Nn, Kx * Ky * Ni * Nn);
     printf("Weights memory size: %lu bytes\n", F_MEM_SIZE);
-}
-
-
-
-template<typename T>
-__host__
-void convolution_cpu(T h_input[Ni][NyPad][NxPad], T h_filters[Nn][Ni][Ky][Kx], T h_output_cpu[Nn][Oy][Ox]) {
-    for (int nn = 0; nn < Nn; ++nn) {
-        for (int oy = 0; oy < Oy; ++oy) {
-            for (int ox = 0; ox < Ox; ++ox) {
-                T sum = 0.0f;
-                for (int ni = 0; ni < Ni; ++ni) {
-                    for (int ky = 0; ky < Ky; ++ky) {
-                        for (int kx = 0; kx < Kx; ++kx) {
-                            int iy = oy * StrideY + ky;
-                            int ix = ox * StrideX + kx;
-                            sum += h_input[ni][iy][ix] * h_filters[nn][ni][ky][kx];
-                        }
-                    }
-                }
-                h_output_cpu[nn][oy][ox] = sum;
-            }
-        }
-    }
-}
-
-
-template<typename T>
-__host__
-void checkOutput(T *h_output, T *h_output_cpu, unsigned int total_size) {
-    for (int i = 0; i < total_size; i++) {
-        float gpu_val = static_cast<float>(h_output[i]);
-        float cpu_val = static_cast<float>(h_output_cpu[i]);
-        if (std::abs(gpu_val - cpu_val) > 1e-3) {
-            printf("Mismatch at h_output[%d]: %f (CPU) vs %f (GPU)\n", i, cpu_val, gpu_val);
-            exit(1);
-        }
-    }
 }
