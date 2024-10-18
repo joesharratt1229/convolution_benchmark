@@ -41,8 +41,8 @@ template<typename T>
 __inline__ T cubicKernel(T x) {
     T A = -0.75;
 
-    if (x <= 1) return (A+2)*std::pow(x,3) - (A+3)*std::pow(x,2) + 1;
-    else if (x < 2) return (A*std::pow(x,3) - 2*A*std::pow(x,2) + x);
+    if (x <= 1) return ((A + 2) * x - (A + 3)) * x * x + 1;
+    else if (x < 2) return ((A * x - 5 * A) * x + 8 * A) * x - 4 * A;
     return 0;
 }
 
@@ -58,8 +58,8 @@ void bicubic_convolution_cpu(T pos_embeds[POS_EMBEDS][POS_EMBEDS], const int hei
         for (int oy = 0; oy < Oy; oy++) {
             for (int ox = 0; ox < Ox; ox++) {
                 T sum = 0.0f;
-                T iy_pos = oy * scale_factor_y;
-                T ix_pos = ox * scale_factor_x;
+                T iy_pos = oy / scale_factor_y;
+                T ix_pos = ox / scale_factor_x;
 
                 int iy_floor = std::floor(iy_pos);
                 int ix_floor = std::floor(ix_pos);

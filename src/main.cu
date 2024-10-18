@@ -53,7 +53,7 @@ int main(int argc, char **argv) {
         //convolution_cpu(h_input, h_filters, h_output_cpu);
         bicubic_convolution_cpu(pos_embeds, Oy, Ox, h_output_cpu_bicubic);
         //checkOutput(&h_output[0][0][0], &h_output_cpu[0][0][0], Ox * Oy * Nn);
-       // checkOutput(&h_output_bicubic[0][0][0], &h_output_cpu_bicubic[0][0][0], Ox * Oy * Nn);
+        checkOutput(&h_output_bicubic[0][0][0], &h_output_cpu_bicubic[0][0][0], Ox * Oy * Nn);
     } 
 
     return 0;

@@ -20,6 +20,7 @@ $(MODULE): $(SRCDIR)/main.cu $(HEADERS)
 
 
 debug_build: CFLAGS += $(DEBUGFLAGS)
+debug_build: NVFLAGS += -G --device-debug
 debug_build: $(MODULE)
 
 clean:
