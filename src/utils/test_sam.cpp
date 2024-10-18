@@ -1,4 +1,4 @@
-
+#include <cmath>
 
 template<typename T>
 __host__
@@ -51,15 +51,15 @@ template<typename T>
 __host__
 void bicubic_convolution_cpu(T pos_embeds[POS_EMBEDS][POS_EMBEDS], const int height, const int width, T h_output_cpu[Nn][Oy][Ox]) 
 {
-    int scale_factor_x = POS_EMBEDS / width;
-    int scale_factor_y = POS_EMBEDS / height;
+    T scale_factor_x = static_cast<T>(width) / static_cast<T>(POS_EMBEDS);
+    T scale_factor_y = static_cast<T>(height) / static_cast<T>(POS_EMBEDS);
 
     for (int nn = 0; nn < Nn; nn++) {
         for (int oy = 0; oy < Oy; oy++) {
             for (int ox = 0; ox < Ox; ox++) {
                 T sum = 0.0f;
-                int iy_pos = oy * scale_factor_y;
-                int ix_pos = ox * scale_factor_x;
+                T iy_pos = oy * scale_factor_y;
+                T ix_pos = ox * scale_factor_x;
 
                 int iy_floor = std::floor(iy_pos);
                 int ix_floor = std::floor(ix_pos);
@@ -71,8 +71,8 @@ void bicubic_convolution_cpu(T pos_embeds[POS_EMBEDS][POS_EMBEDS], const int hei
                 T y_coeffs[4];
                 
                 for (int i = 0; i < 4; i++) {
-                    x_coeffs[i] = cubicKernel(ix_floor + i + scaled_x_coord);
-                    y_coeffs[i] = cubicKernel(iy_floor + i + scaled_y_coord);
+                    x_coeffs[i] = cubicKernel(i - 1 + scaled_x_coord);
+                    y_coeffs[i] = cubicKernel(i - 1 + scaled_y_coord);
                 }
 
                 for (int y = 0; y < 4; y++) {

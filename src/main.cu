@@ -45,14 +45,15 @@ int main(int argc, char **argv) {
     padInput(h_input);
     randomizePosEmbeddings(pos_embeds);
 
-    template_conv_2d(h_input, h_filters, h_output);
+    //template_conv_2d(h_input, h_filters, h_output);
     template_bicubic_upsample<floatT, POS_EMBEDS, Nn, Oy, Ox>(pos_embeds, h_output_bicubic, input_dims, output_dims);
 
     // Check output
     if (DEBUG) {
-        convolution_cpu(h_input, h_filters, h_output_cpu);
-        bicubic_convolution_cpu(pos_embeds, NyPad, NxPad, h_output_cpu_bicubic);
-        checkOutput(&h_output[0][0][0], &h_output_cpu[0][0][0], Ox * Oy * Nn);
+        //convolution_cpu(h_input, h_filters, h_output_cpu);
+        bicubic_convolution_cpu(pos_embeds, Oy, Ox, h_output_cpu_bicubic);
+        //checkOutput(&h_output[0][0][0], &h_output_cpu[0][0][0], Ox * Oy * Nn);
+        checkOutput(&h_output_bicubic[0][0][0], &h_output_cpu_bicubic[0][0][0], Ox * Oy * Nn);
     } 
 
     return 0;
