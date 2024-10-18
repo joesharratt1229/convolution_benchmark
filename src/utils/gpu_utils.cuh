@@ -1,4 +1,5 @@
-
+#ifndef GPU_UTILS_CUH
+#define GPU_UTILS_CUH
 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true) {
     if (code != cudaSuccess) {
@@ -6,3 +7,5 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort =
         if (abort) exit(code);
     }
 }
+
+#endif

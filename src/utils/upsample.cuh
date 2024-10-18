@@ -3,6 +3,7 @@
 
 
 #include "common.h"
+#include "gpu_utils.cuh"
 
 template<typename T>
 __device__ __inline__ T cubic_convolution_1(T x, T a) {
@@ -31,8 +32,8 @@ __device__ __inline__ T upsample_value_bounded(T data[PosEmbeds][PosEmbeds],
                                               int width,
                                               int height,
                                               int channel,
-                                              int y,
-                                              int x)
+                                              int x,
+                                              int y)
 {
     int access_y = max(min(y, height - 1), 0);
     int access_x = max(min(x, width - 1), 0);
@@ -45,22 +46,22 @@ __global__ void bicubic_interpolation_kernel(T input[PosEmbeds][PosEmbeds],
                                              T output[OutNn][OutOy][OutOx], 
                                              dims input_dims,
                                              dims output_dims,
-                                             const int scale_factor_x,
-                                             const int scale_factor_y) {
+                                             const T scale_factor_x,
+                                             const T scale_factor_y) {
     int output_col = blockIdx.x * blockDim.x + threadIdx.x;
     int output_row = blockIdx.y * blockDim.y + threadIdx.y;
     int output_channel = blockIdx.z * blockDim.z + threadIdx.z;
 
-    T x_coord = output_col/scale_factor_x;
-    T y_coord = output_row/scale_factor_y;
+    T x_coord = static_cast<T>(output_col)/static_cast<T>(scale_factor_x);
+    T y_coord = static_cast<T>(output_row)/static_cast<T>(scale_factor_y);
 
     if (output_dims.width == input_dims.width && output_dims.height == input_dims.height) {
         output[output_channel][output_row][output_col] = input[output_row][output_col];
         return;
     }
 
-    T x_floor = floor(x_coord);
-    T y_floor = floor(y_coord);
+    T x_floor = std::floor(x_coord);
+    T y_floor = std::floor(y_coord);
 
     T scaled_x_coord = x_coord - x_floor;
     T scaled_y_coord = y_coord - y_floor;
@@ -110,8 +111,11 @@ __host__ void template_bicubic_upsample(T input[PosEmbeds][PosEmbeds],
     cudaMalloc((void**)&d_input, sizeof(T) * PosEmbeds * PosEmbeds);
     cudaMalloc((void**)&d_output, sizeof(T) * OutNn * OutOy * OutOx);
 
-    cudaMemcpy(d_input, input, sizeof(T) * PosEmbeds * PosEmbeds, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_output, output, sizeof(T) * OutNn * OutOy * OutOx, cudaMemcpyHostToDevice);
+    gpuErrchk(cudaMemcpy(d_input, input, sizeof(T) * PosEmbeds * PosEmbeds, cudaMemcpyHostToDevice));
+
+    for (int i = 0; i < 5; i++) {
+        printf("input[0][%d] = %f, h_verify[0][%d] = %f\n", i, input[0][i], i, d_input[i]);
+    }
 
     cudaStream_t stream;
     cudaStreamCreate(&stream);
@@ -123,7 +127,7 @@ __host__ void template_bicubic_upsample(T input[PosEmbeds][PosEmbeds],
                                                                                 scale_factor_x, 
                                                                                 scale_factor_y);
 
-    cudaMemcpy(output, d_output, sizeof(T) * OutNn * OutOy * OutOx, cudaMemcpyDeviceToHost);
+    gpuErrchk(cudaMemcpy(output, d_output, sizeof(T) * OutNn * OutOy * OutOx, cudaMemcpyDeviceToHost));
 
     cudaStreamDestroy(stream);
     cudaFree(d_input);
