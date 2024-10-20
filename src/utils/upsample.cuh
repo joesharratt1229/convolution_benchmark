@@ -123,11 +123,11 @@ __host__ void template_bicubic_upsample(T input[PosEmbeds][PosEmbeds],
     cudaStreamCreate(&stream);
 
     bicubic_interpolation_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_input, 
-                                                                                d_output, 
-                                                                                input_dims, 
-                                                                                output_dims, 
-                                                                                scale_factor_x, 
-                                                                                scale_factor_y);
+                                                                    d_output, 
+                                                                    input_dims, 
+                                                                    output_dims, 
+                                                                    scale_factor_x, 
+                                                                    scale_factor_y);
 
     gpuErrchk(cudaMemcpy(output, d_output, sizeof(T) * OutNn * OutOy * OutOx, cudaMemcpyDeviceToHost));
 

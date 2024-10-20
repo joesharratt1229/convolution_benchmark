@@ -1,11 +1,15 @@
+#include "cuda_runtime.h"
+
 #include "common.h"
 #include "gpu_utils.cuh"
 
 
 template<typename T>
-__global__ void conv_2d_kernel(T d_input[Ni][NyPad][NxPad], T d_filters[Nn][Ni][Ky][Kx], T d_output[Nn][Oy][Ox])
+__global__ void conv_2d_kernel(T d_input[Ni][NyPad][NxPad], 
+                               T d_filters[Nn][Ni][Ky][Kx], 
+                               T d_output[Nn][Oy][Ox])
 {
-        unsigned int col = 2*(blockIdx.x * TILE_SIZE + threadIdx.x);
+    unsigned int col = 2*(blockIdx.x * TILE_SIZE + threadIdx.x);
     unsigned int row = blockIdx.y * TILE_SIZE + threadIdx.y;
     unsigned int output_channel = blockIdx.z * CHANNEL_SIZE + threadIdx.z;
 
@@ -60,7 +64,10 @@ __global__ void conv_2d_kernel(T d_input[Ni][NyPad][NxPad], T d_filters[Nn][Ni][
 
 
 template<typename T>
-__host__ void template_conv_2d(T h_input[Ni][NyPad][NxPad], T h_filters[Nn][Ni][Ky][Kx], T h_output[Nn][Oy][Ox])
+__host__ void template_conv_2d(T h_input[Ni][NyPad][NxPad], 
+                               T h_filters[Nn][Ni][Ky][Kx], 
+                               T h_output[Nn][Oy][Ox],
+                               T pos_embeds[POS_EMBEDS][POS_EMBEDS])
 {
     unsigned int Ox2 = (Ox + 1) / 2;
 
@@ -78,12 +85,10 @@ __host__ void template_conv_2d(T h_input[Ni][NyPad][NxPad], T h_filters[Nn][Ni][
     cudaMalloc((void**)&d_output, O_MEM_SIZE);
     cudaMalloc((void**)&d_filters, F_MEM_SIZE);
 
-
-    // Randomize inputs/filters and set padded regions to 0
-
     // Copy filters and input : host -> device
     gpuErrchk(cudaMemcpy(d_input, h_input, I_MEM_SIZE, cudaMemcpyHostToDevice));
     gpuErrchk(cudaMemcpy(d_filters, h_filters, F_MEM_SIZE, cudaMemcpyHostToDevice));
+    //gpuErrchk(cudaMemcpy(d_pos_embeds, pos_embeds, PE_MEM_SIZE, cudaMemcpyHostToDevice));
 
 
     // Start timer and execute kernel
@@ -91,7 +96,7 @@ __host__ void template_conv_2d(T h_input[Ni][NyPad][NxPad], T h_filters[Nn][Ni][
     cudaStreamCreate(&stream);
 
 
-    conv_2d_kernel<<<blocksPerGrid, threadsPerBlock>>>(d_input, d_filters, d_output);
+    conv_2d_kernel<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_input, d_filters, d_output);
     gpuErrchk(cudaDeviceSynchronize());
 
     // Copy output : device -> host

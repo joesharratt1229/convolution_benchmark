@@ -46,6 +46,16 @@ __inline__ T cubicKernel(T x) {
     return 0;
 }
 
+template<typename T>
+__inline__ void get_upsample_coefficients_cpu(T x1, T* coeffs) {
+    coeffs[0] = cubicKernel<T>(x1 + 1);
+    coeffs[1] = cubicKernel<T>(x1);
+
+    T x2 = 1 - x1;
+    coeffs[2] = cubicKernel<T>(x2);
+    coeffs[3] = cubicKernel<T>(x2 + 1);
+} 
+
 
 template<typename T>
 __host__
@@ -70,10 +80,8 @@ void bicubic_convolution_cpu(T pos_embeds[POS_EMBEDS][POS_EMBEDS], const int hei
                 T x_coeffs[4];
                 T y_coeffs[4];
                 
-                for (int i = 0; i < 4; i++) {
-                    x_coeffs[i] = cubicKernel(i - 1 + scaled_x_coord);
-                    y_coeffs[i] = cubicKernel(i - 1 + scaled_y_coord);
-                }
+                get_upsample_coefficients_cpu(scaled_x_coord, x_coeffs);
+                get_upsample_coefficients_cpu(scaled_y_coord, y_coeffs);
 
                 for (int y = 0; y < 4; y++) {
                     for (int x = 0; x < 4; x++) {
