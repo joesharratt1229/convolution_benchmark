@@ -20,10 +20,10 @@
 #define F_MEM_SIZE (F_SIZE * sizeof(floatT))
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 #define TILE_SIZE 8
-#define CHANNEL_SIZE 16
 #define INPUT_TILE_X (TILE_SIZE*StrideX + Kx - 1)   
 #define INPUT_TILE_Y (TILE_SIZE*StrideY + Ky - 1)
 #define POS_EMBEDS 14
+#define nStreams 8
 
 typedef struct {
     int width;
@@ -41,5 +41,7 @@ typedef half floatT;
 #elif defined(ENABLE_BP16)
 typedef __nv_bfloat16 floatT;
 #endif
+
+typedef float accFloatT;
 
 #endif
