@@ -3,7 +3,7 @@
 
 #include "utils/common.h" 
 #include "utils/convolution.cuh"
-//#include "utils/upsample.cuh"
+#include "utils/upsample.cuh"
 #include "utils/test_sam.cpp"
 
 using namespace std;
@@ -23,7 +23,7 @@ __host__ void printParameters();
 
 template<typename T>
 __host__
-void randomizePosEmbeddings(T h_pos_embeds[POS_EMBEDS][POS_EMBEDS]);
+void randomizePosEmbeddings(T h_pos_embeds[Nn][POS_EMBEDS][POS_EMBEDS]);
 
 
 int main(int argc, char **argv) {
@@ -36,24 +36,25 @@ int main(int argc, char **argv) {
     static floatT h_output_cpu[Nn][Oy][Ox];
     static floatT h_output_cpu_bicubic[Nn][Oy][Ox];
     static floatT h_filters[Nn][Ni][Ky][Kx]; 
-    static floatT pos_embeds[POS_EMBEDS][POS_EMBEDS];
+    static floatT pos_embeds[Nn][POS_EMBEDS][POS_EMBEDS];
 
-    dims input_dims = {POS_EMBEDS, POS_EMBEDS, 1};
+    dims input_dims = {POS_EMBEDS, POS_EMBEDS, Nn};
     dims output_dims = {Ox, Oy, Nn};
     randomizeFilters(h_filters);
     randomizeInput(h_input);
     padInput(h_input);
     randomizePosEmbeddings(pos_embeds);
 
-    template_conv_2d(h_input, h_filters, h_output, pos_embeds);
-    //template_bicubic_upsample<floatT, POS_EMBEDS, Nn, Oy, Ox>(pos_embeds, h_output_bicubic, input_dims, output_dims);
+    template_conv_2d<floatT, 16>(h_input, h_filters, h_output);
+    template_bicubic_upsample<floatT, POS_EMBEDS, Nn, Oy, Ox, 16>(pos_embeds, h_output_bicubic, input_dims, output_dims);
+    printf("Output dimensions: %d, %d, %d\n", Ox, Oy, Nn);
 
     // Check output
     if (DEBUG) {
-        convolution_cpu(h_input, h_filters, h_output_cpu);
-        //bicubic_convolution_cpu(pos_embeds, Oy, Ox, h_output_cpu_bicubic);
-        checkOutput(&h_output[0][0][0], &h_output_cpu[0][0][0], Ox * Oy * Nn);
-        //checkOutput(&h_output_bicubic[0][0][0], &h_output_cpu_bicubic[0][0][0], Ox * Oy * Nn);
+        //convolution_cpu(h_input, h_filters, h_output_cpu);
+        bicubic_convolution_cpu(pos_embeds, Oy, Ox, h_output_cpu_bicubic);
+        //checkOutput(&h_output[0][0][0], &h_output_cpu[0][0][0], Ox * Oy * Nn);
+        checkOutput(&h_output_bicubic[0][0][0], &h_output_cpu_bicubic[0][0][0], Ox * Oy * Nn);
     } 
 
     return 0;
@@ -63,10 +64,11 @@ int main(int argc, char **argv) {
 
 template<typename T>
 __host__
-void randomizePosEmbeddings(T h_pos_embeds[POS_EMBEDS][POS_EMBEDS]) {
-    for (int yy = 0; yy < POS_EMBEDS; ++yy)
-        for (int xx = 0; xx < POS_EMBEDS; ++xx)
-            h_pos_embeds[yy][xx] = static_cast<T>(static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f);
+void randomizePosEmbeddings(T h_pos_embeds[Nn][POS_EMBEDS][POS_EMBEDS]) {
+    for (int nn = 0; nn < Nn; ++nn)
+        for (int yy = 0; yy < POS_EMBEDS; ++yy)
+            for (int xx = 0; xx < POS_EMBEDS; ++xx)
+                h_pos_embeds[nn][yy][xx] = static_cast<T>(static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f);
 }
 
 
