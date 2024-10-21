@@ -3,7 +3,6 @@
 #include "common.h"
 #include "gpu_utils.cuh"
 
-
 template<typename T>
 __global__ void conv_2d_kernel(T d_input[Ni][NyPad][NxPad], 
                                T d_filters[Nn][Ni][Ky][Kx], 
@@ -11,7 +10,7 @@ __global__ void conv_2d_kernel(T d_input[Ni][NyPad][NxPad],
 {
     unsigned int col = 2*(blockIdx.x * TILE_SIZE + threadIdx.x);
     unsigned int row = blockIdx.y * TILE_SIZE + threadIdx.y;
-    unsigned int output_channel = blockIdx.z * CHANNEL_SIZE + threadIdx.z;
+    unsigned int output_channel = blockIdx.z * blockDim.z + threadIdx.z;
 
     __shared__ T input_cache[Ni][INPUT_TILE_Y][INPUT_TILE_X*2];
 
@@ -63,11 +62,10 @@ __global__ void conv_2d_kernel(T d_input[Ni][NyPad][NxPad],
 
 
 
-template<typename T>
+template<typename T, int CHANNEL_SIZE>
 __host__ void template_conv_2d(T h_input[Ni][NyPad][NxPad], 
                                T h_filters[Nn][Ni][Ky][Kx], 
-                               T h_output[Nn][Oy][Ox],
-                               T pos_embeds[POS_EMBEDS][POS_EMBEDS])
+                               T h_output[Nn][Oy][Ox])
 {
     unsigned int Ox2 = (Ox + 1) / 2;
 

@@ -98,10 +98,10 @@ __global__ void bicubic_interpolation_kernel(T* input,
 
 
 template <typename T, int PosEmbeds, int OutNn, int OutOy, int OutOx, int CHANNEL_SIZE>
-__host__ void template_bicubic_upsample(T input[OutNn][PosEmbeds][PosEmbeds], 
-                                        T output[OutNn][OutOy][OutOx], 
-                                        dims input_dims,
-                                        dims output_dims) {                                
+__host__ void template_bicubic_upsample_and_window_embed(T input[OutNn][PosEmbeds][PosEmbeds], 
+                                                         T output[OutNn][OutOy][OutOx], 
+                                                        dims input_dims,
+                                                        dims output_dims) {                                
     
 
     accFloatT scale_factor_x = output_dims.width / input_dims.width;
