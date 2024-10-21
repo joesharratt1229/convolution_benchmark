@@ -97,11 +97,12 @@ __global__ void bicubic_interpolation_kernel(T* input,
 }
 
 
-template <typename T, int PosEmbeds, int OutNn, int OutOy, int OutOx, int CHANNEL_SIZE>
+template <typename T, int PosEmbeds, int OutNn, int OutOy, int OutOx, int CHANNEL_SIZE, int window_embeds_size>
 __host__ void template_bicubic_upsample_and_window_embed(T input[OutNn][PosEmbeds][PosEmbeds], 
                                                          T output[OutNn][OutOy][OutOx], 
-                                                        dims input_dims,
-                                                        dims output_dims) {                                
+                                                         T window_embeds[OutNn][window_embeds_size][window_embeds_size],
+                                                         dims input_dims,
+                                                         dims output_dims) {                                
     
 
     accFloatT scale_factor_x = output_dims.width / input_dims.width;
@@ -111,6 +112,11 @@ __host__ void template_bicubic_upsample_and_window_embed(T input[OutNn][PosEmbed
     T *d_output[nStreams];
 
     cudaStream_t stream[nStreams];
+
+    int window_repeat_x = OutOx/window_embeds_size;
+    int window_repeat_y = OutOy/window_embeds_size;
+
+    accFloatT scale_factor_x = output_dims.width / input_dims.width;
 
     int streamChannelSize = (output_dims.channel + nStreams - 1) / nStreams;
 
