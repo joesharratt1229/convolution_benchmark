@@ -43,11 +43,14 @@ __device__ __inline__ T upsample_value_bounded(T* data,
 
 template <typename T>
 __global__ void bicubic_interpolation_kernel(T* input, 
+                                             T* window_embeds,
                                              T* output, 
                                              dims input_dims,
                                              dims output_dims,
                                              const accFloatT scale_factor_x,
-                                             const accFloatT scale_factor_y) {
+                                             const accFloatT scale_factor_y,
+                                             const int window_repeat_x,
+                                             const int window_repeat_y) {
                                    
     int output_col = blockIdx.x * blockDim.x + threadIdx.x;
     int output_row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -91,7 +94,7 @@ __global__ void bicubic_interpolation_kernel(T* input,
             output_value += x_coeffs[i] * y_coeffs[j] * static_cast<accFloatT>(value);
         }
     }
-    output[output_channel * output_dims.width * output_dims.height + output_row * output_dims.width + output_col] = output_value;  
+    output[output_channel * output_dims.width * output_dims.height + output_row * output_dims.width + output_col] = static_cast<T>(output_value);  
 
 
 }
@@ -110,13 +113,12 @@ __host__ void template_bicubic_upsample_and_window_embed(T input[OutNn][PosEmbed
 
     T *d_input[nStreams];
     T *d_output[nStreams];
+    T* d_window_embeds[nStreams];
 
     cudaStream_t stream[nStreams];
 
     int window_repeat_x = OutOx/window_embeds_size;
     int window_repeat_y = OutOy/window_embeds_size;
-
-    accFloatT scale_factor_x = output_dims.width / input_dims.width;
 
     int streamChannelSize = (output_dims.channel + nStreams - 1) / nStreams;
 
@@ -131,15 +133,26 @@ __host__ void template_bicubic_upsample_and_window_embed(T input[OutNn][PosEmbed
 
         cudaMalloc((void**)&d_input[i], sizeof(T) * PosEmbeds * PosEmbeds * streamChannelSize);
         cudaMalloc((void**)&d_output[i], sizeof(T) * OutOy * OutOx * streamChannelSize);
+        cudaMalloc((void**)&d_window_embeds[i], sizeof(T) * window_embeds_size * window_embeds_size * streamChannelSize);
 
         gpuErrchk(cudaMemcpyAsync(d_input[i], &input[i*streamChannelSize][0][0], sizeof(T) * PosEmbeds * PosEmbeds * streamChannelSize, cudaMemcpyHostToDevice, stream[i]));
-        bicubic_interpolation_kernel<<<blocksPerGrid, threadsPerBlock, 0, stream[i]>>>(d_input[i], d_output[i], input_dims, output_dims, scale_factor_x, scale_factor_y);
+        gpuErrchk(cudaMemcpyAsync(d_window_embeds[i], &window_embeds[i*streamChannelSize][0][0], sizeof(T) * window_embeds_size * window_embeds_size * streamChannelSize, cudaMemcpyHostToDevice, stream[i]));
+        bicubic_interpolation_kernel<<<blocksPerGrid, threadsPerBlock, 0, stream[i]>>>(d_input[i], 
+                                                                                       d_window_embeds[i], 
+                                                                                       d_output[i],
+                                                                                       input_dims, 
+                                                                                       output_dims, 
+                                                                                       scale_factor_x, 
+                                                                                       scale_factor_y, 
+                                                                                       window_repeat_x, 
+                                                                                       window_repeat_y);
         gpuErrchk(cudaMemcpyAsync(&output[i*streamChannelSize][0][0], d_output[i], sizeof(T) * OutOy * OutOx * streamChannelSize, cudaMemcpyDeviceToHost, stream[i]));
 
         cudaStreamSynchronize(stream[i]);
         cudaStreamDestroy(stream[i]);
         cudaFree(d_input[i]);
         cudaFree(d_output[i]);
+        cudaFree(d_window_embeds[i]);
     }
 
 }

@@ -24,6 +24,7 @@
 #define INPUT_TILE_Y (TILE_SIZE*StrideY + Ky - 1)
 #define POS_EMBEDS 14
 #define nStreams 8
+#define WINDOW_EMBEDS 8
 
 typedef struct {
     int width;

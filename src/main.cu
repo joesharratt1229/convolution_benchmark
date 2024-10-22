@@ -22,6 +22,8 @@ template<typename T>
 __host__ void printParameters();
 
 template<typename T>
+__host__ void randomizeWindowEmbeddings(T h_window_embeds[Nn][WINDOW_EMBEDS][WINDOW_EMBEDS]);
+template<typename T>
 __host__
 void randomizePosEmbeddings(T h_pos_embeds[Nn][POS_EMBEDS][POS_EMBEDS]);
 
@@ -37,6 +39,7 @@ int main(int argc, char **argv) {
     static floatT h_output_cpu_bicubic[Nn][Oy][Ox];
     static floatT h_filters[Nn][Ni][Ky][Kx]; 
     static floatT pos_embeds[Nn][POS_EMBEDS][POS_EMBEDS];
+    static floatT h_window_embeds[Nn][WINDOW_EMBEDS][WINDOW_EMBEDS];
 
     dims input_dims = {POS_EMBEDS, POS_EMBEDS, Nn};
     dims output_dims = {Ox, Oy, Nn};
@@ -44,10 +47,9 @@ int main(int argc, char **argv) {
     randomizeInput(h_input);
     padInput(h_input);
     randomizePosEmbeddings(pos_embeds);
-
+    randomizeWindowEmbeddings(h_window_embeds);
     template_conv_2d<floatT, 16>(h_input, h_filters, h_output);
-    template_bicubic_upsample<floatT, POS_EMBEDS, Nn, Oy, Ox, 16>(pos_embeds, h_output_bicubic, input_dims, output_dims);
-    printf("Output dimensions: %d, %d, %d\n", Ox, Oy, Nn);
+    template_bicubic_upsample_and_window_embed<floatT, POS_EMBEDS, Nn, Oy, Ox, 16, WINDOW_EMBEDS>(pos_embeds, h_output_bicubic, h_window_embeds, input_dims, output_dims);
 
     // Check output
     if (DEBUG) {
@@ -60,6 +62,13 @@ int main(int argc, char **argv) {
     return 0;
 } 
 
+template<typename T>
+__host__ void randomizeWindowEmbeddings(T h_window_embeds[Nn][WINDOW_EMBEDS][WINDOW_EMBEDS]) {
+    for (int nn = 0; nn < Nn; ++nn)
+        for (int yy = 0; yy < WINDOW_EMBEDS; ++yy)
+            for (int xx = 0; xx < WINDOW_EMBEDS; ++xx)
+                h_window_embeds[nn][yy][xx] = static_cast<T>(static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f);
+}
 
 
 template<typename T>
