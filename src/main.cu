@@ -33,7 +33,7 @@ int main(int argc, char **argv) {
 
 
     static floatT h_input[Ni][NyPad][NxPad];
-    static floatT h_output[Nn][Oy][Ox];
+    static floatT h_convolution_output[Nn][Oy][Ox];
     static floatT h_output_bicubic[Nn][Oy][Ox];
     static floatT h_output_cpu[Nn][Oy][Ox];
     static floatT h_output_cpu_bicubic[Nn][Oy][Ox];
@@ -48,8 +48,13 @@ int main(int argc, char **argv) {
     padInput(h_input);
     randomizePosEmbeddings(pos_embeds);
     randomizeWindowEmbeddings(h_window_embeds);
-    template_conv_2d<floatT, 16>(h_input, h_filters, h_output);
-    template_bicubic_upsample_and_window_embed<floatT, POS_EMBEDS, Nn, Oy, Ox, 16, WINDOW_EMBEDS>(pos_embeds, h_output_bicubic, h_window_embeds, input_dims, output_dims);
+    template_conv_2d<floatT, 16>(h_input, h_filters, h_convolution_output);
+    template_bicubic_upsample_and_window_embed<floatT, POS_EMBEDS, Nn, Oy, Ox, 16, WINDOW_EMBEDS>(pos_embeds, 
+                                                                                                 h_output_bicubic, 
+                                                                                                 h_convolution_output,
+                                                                                                 h_window_embeds, 
+                                                                                                 input_dims, 
+                                                                                                 output_dims);
 
     // Check output
     if (DEBUG) {

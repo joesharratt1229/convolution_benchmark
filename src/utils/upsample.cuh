@@ -41,10 +41,11 @@ __device__ __inline__ T upsample_value_bounded(T* data,
 }
 
 
-template <typename T>
+template <typename T, int window_embeds_size>
 __global__ void bicubic_interpolation_kernel(T* input, 
                                              T* window_embeds,
                                              T* output, 
+                                             T* convolution_output,
                                              dims input_dims,
                                              dims output_dims,
                                              const accFloatT scale_factor_x,
@@ -59,6 +60,11 @@ __global__ void bicubic_interpolation_kernel(T* input,
     if (output_col >= output_dims.width || output_row >= output_dims.height || output_channel >= output_dims.channel) {
         return;
     }
+
+    int x_window_coord = output_col%window_embeds_size;
+    int y_window_coord = output_row%window_embeds_size;
+    
+    T window_coordinates = (output_col < window_repeat_x*window_embeds_size && output_row < window_repeat_y*window_embeds_size) ? window_embeds[output_channel * window_embeds_size * window_embeds_size + y_window_coord * window_embeds_size + x_window_coord] : static_cast<T>(0);
 
     accFloatT x_coord = output_col/scale_factor_x;
     accFloatT y_coord = output_row/scale_factor_y;
@@ -94,26 +100,29 @@ __global__ void bicubic_interpolation_kernel(T* input,
             output_value += x_coeffs[i] * y_coeffs[j] * static_cast<accFloatT>(value);
         }
     }
-    output[output_channel * output_dims.width * output_dims.height + output_row * output_dims.width + output_col] = static_cast<T>(output_value);  
+    int index = output_channel * output_dims.width * output_dims.height + output_row * output_dims.width + output_col;
+    output[index] = static_cast<T>(output_value);// + window_coordinates + convolution_output[index];  
 
 
 }
 
 
 template <typename T, int PosEmbeds, int OutNn, int OutOy, int OutOx, int CHANNEL_SIZE, int window_embeds_size>
-__host__ void template_bicubic_upsample_and_window_embed(T input[OutNn][PosEmbeds][PosEmbeds], 
-                                                         T output[OutNn][OutOy][OutOx], 
+__host__ void template_bicubic_upsample_and_window_embed(T pos_embeds[OutNn][PosEmbeds][PosEmbeds], 
+                                                         T pos_embeds_output[OutNn][OutOy][OutOx], 
+                                                         T convolution_output[OutNn][OutOy][OutOx],
                                                          T window_embeds[OutNn][window_embeds_size][window_embeds_size],
-                                                         dims input_dims,
+                                                         dims pos_embeds_dims,
                                                          dims output_dims) {                                
     
 
-    accFloatT scale_factor_x = output_dims.width / input_dims.width;
-    accFloatT scale_factor_y = output_dims.height / input_dims.height;
+    accFloatT scale_factor_x = output_dims.width / pos_embeds_dims.width;
+    accFloatT scale_factor_y = output_dims.height / pos_embeds_dims.height;
 
-    T *d_input[nStreams];
-    T *d_output[nStreams];
+    T *d_pos_embeds[nStreams];
+    T *d_pos_embeds_output[nStreams];
     T* d_window_embeds[nStreams];
+    T* d_convolution_output[nStreams];
 
     cudaStream_t stream[nStreams];
 
@@ -131,28 +140,32 @@ __host__ void template_bicubic_upsample_and_window_embed(T input[OutNn][PosEmbed
     for (int i = 0; i < nStreams; i++) {
         cudaStreamCreate(&stream[i]);
 
-        cudaMalloc((void**)&d_input[i], sizeof(T) * PosEmbeds * PosEmbeds * streamChannelSize);
-        cudaMalloc((void**)&d_output[i], sizeof(T) * OutOy * OutOx * streamChannelSize);
+        cudaMalloc((void**)&d_pos_embeds[i], sizeof(T) * PosEmbeds * PosEmbeds * streamChannelSize);
+        cudaMalloc((void**)&d_pos_embeds_output[i], sizeof(T) * OutOy * OutOx * streamChannelSize);
         cudaMalloc((void**)&d_window_embeds[i], sizeof(T) * window_embeds_size * window_embeds_size * streamChannelSize);
-
-        gpuErrchk(cudaMemcpyAsync(d_input[i], &input[i*streamChannelSize][0][0], sizeof(T) * PosEmbeds * PosEmbeds * streamChannelSize, cudaMemcpyHostToDevice, stream[i]));
+        cudaMalloc((void**)&d_convolution_output[i], sizeof(T) * OutOy * OutOx * streamChannelSize);
+        gpuErrchk(cudaMemcpyAsync(d_pos_embeds[i], &pos_embeds[i*streamChannelSize][0][0], sizeof(T) * PosEmbeds * PosEmbeds * streamChannelSize, cudaMemcpyHostToDevice, stream[i]));
         gpuErrchk(cudaMemcpyAsync(d_window_embeds[i], &window_embeds[i*streamChannelSize][0][0], sizeof(T) * window_embeds_size * window_embeds_size * streamChannelSize, cudaMemcpyHostToDevice, stream[i]));
-        bicubic_interpolation_kernel<<<blocksPerGrid, threadsPerBlock, 0, stream[i]>>>(d_input[i], 
-                                                                                       d_window_embeds[i], 
-                                                                                       d_output[i],
-                                                                                       input_dims, 
-                                                                                       output_dims, 
-                                                                                       scale_factor_x, 
-                                                                                       scale_factor_y, 
-                                                                                       window_repeat_x, 
-                                                                                       window_repeat_y);
-        gpuErrchk(cudaMemcpyAsync(&output[i*streamChannelSize][0][0], d_output[i], sizeof(T) * OutOy * OutOx * streamChannelSize, cudaMemcpyDeviceToHost, stream[i]));
+        gpuErrchk(cudaMemcpyAsync(d_convolution_output[i], &convolution_output[i*streamChannelSize][0][0], sizeof(T) * OutOy * OutOx * streamChannelSize, cudaMemcpyHostToDevice, stream[i]));
+        bicubic_interpolation_kernel<T, window_embeds_size><<<blocksPerGrid, threadsPerBlock, 0, stream[i]>>>(d_pos_embeds[i], 
+                                                                                                            d_window_embeds[i], 
+                                                                                                            d_pos_embeds_output[i],
+                                                                                                            d_convolution_output[i],
+                                                                                                            pos_embeds_dims, 
+                                                                                                            output_dims, 
+                                                                                                            scale_factor_x, 
+                                                                                                            scale_factor_y, 
+                                                                                                            window_repeat_x, 
+                                                                                                            window_repeat_y);
+        
+        gpuErrchk(cudaMemcpyAsync(&pos_embeds_output[i*streamChannelSize][0][0], d_pos_embeds_output[i], sizeof(T) * OutOy * OutOx * streamChannelSize, cudaMemcpyDeviceToHost, stream[i]));
 
         cudaStreamSynchronize(stream[i]);
         cudaStreamDestroy(stream[i]);
-        cudaFree(d_input[i]);
-        cudaFree(d_output[i]);
+        cudaFree(d_pos_embeds[i]);
+        cudaFree(d_pos_embeds_output[i]);
         cudaFree(d_window_embeds[i]);
+        cudaFree(d_convolution_output[i]);
     }
 
 }
