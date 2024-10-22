@@ -15,7 +15,9 @@ all: $(MODULE)
 
 HEADERS=
 
-$(MODULE): $(SRCDIR)/main.cu $(HEADERS)
+SOURCES := $(SRCDIR)/main.cu 
+
+$(MODULE): $(SOURCES) $(HEADERS)
 	$(NVCC) $^ $(CFLAGS) $(REGFLAGS) $(NVFLAGS) $(INCFLAGS) -o $@ -DNx=2250 -DNy=1250 -DKx=7 -DKy=7 -DNi=3 -DNn=768 -DENABLE_BP16
 
 

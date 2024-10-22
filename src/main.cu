@@ -2,8 +2,8 @@
 #include <cmath>
 
 #include "utils/common.h" 
-#include "utils/convolution.cuh"
-#include "utils/upsample.cuh"
+#include "utils/image_encoder/convolution.cuh"
+#include "utils/image_encoder/upsample.cuh"
 #include "utils/test_sam.cpp"
 
 using namespace std;
@@ -48,8 +48,8 @@ int main(int argc, char **argv) {
     padInput(h_input);
     randomizePosEmbeddings(pos_embeds);
     randomizeWindowEmbeddings(h_window_embeds);
-    template_conv_2d<floatT, 16>(h_input, h_filters, h_convolution_output);
-    template_bicubic_upsample_and_window_embed<floatT, POS_EMBEDS, Nn, Oy, Ox, 16, WINDOW_EMBEDS>(pos_embeds, 
+    image_encoder::template_conv_2d<floatT, 16>(h_input, h_filters, h_convolution_output);
+    image_encoder::template_bicubic_upsample_and_window_embed<floatT, POS_EMBEDS, Nn, Oy, Ox, 16, WINDOW_EMBEDS>(pos_embeds, 
                                                                                                  h_output_bicubic, 
                                                                                                  h_convolution_output,
                                                                                                  h_window_embeds, 

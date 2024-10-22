@@ -1,7 +1,12 @@
+#ifndef CONVOLUTION_CUH
+#define CONVOLUTION_CUH
+
 #include "cuda_runtime.h"
 
-#include "common.h"
-#include "gpu_utils.cuh"
+#include "utils/common.h"
+#include "utils/gpu_utils.cuh"
+
+namespace image_encoder {   
 
 template<typename T>
 __global__ void conv_2d_kernel(T d_input[Ni][NyPad][NxPad], 
@@ -100,3 +105,7 @@ __host__ void template_conv_2d(T h_input[Ni][NyPad][NxPad],
     // Copy output : device -> host
     gpuErrchk(cudaMemcpy(h_output, d_output, O_MEM_SIZE, cudaMemcpyDeviceToHost));
 }
+
+}
+
+#endif

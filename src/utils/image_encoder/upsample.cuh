@@ -1,9 +1,15 @@
 #ifndef UPSAMPLE_CUH
 #define UPSAMPLE_CUH
 
+#include "cuda_runtime.h"
+#include <cuda_bf16.h>
 
-#include "common.h"
-#include "gpu_utils.cuh"
+#include "utils/common.h"
+#include "utils/gpu_utils.cuh"
+
+// Function declarations
+
+namespace image_encoder {
 
 template<typename accFloatT>
 __device__ __inline__ accFloatT cubic_convolution_1(accFloatT x, accFloatT A) {
@@ -167,6 +173,8 @@ __host__ void template_bicubic_upsample_and_window_embed(T pos_embeds[OutNn][Pos
         cudaFree(d_window_embeds[i]);
         cudaFree(d_convolution_output[i]);
     }
+
+}
 
 }
 
