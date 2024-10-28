@@ -12,10 +12,11 @@ namespace image_encoder {
 __constant__ T d_filters[Nn][Ni][Ky][Kx];
 
 
-template<typename T, int Ni, int NyPad, int NxPad, int Oy, int Ox, int Nn>
-__global__ void template_conv_and_bilinear_resid_kernel(T d_input[Ni][NyPad][NxPad],  
-                                                        T conv_output[Nn][Oy][Ox],
-                                                        T bicubic_output[Nn][Oy*2][Ox*2])
+template<typename T, int Ni, int Oy, int Ox, int Nn>
+__global__ void template_conv_and_bilinear_resid_kernel(T d_backbone_input[Ni][Oy][Ox],  
+                                                        T previous_input[Nn][Oy/2][Ox/2],
+                                                        T lateral_feature[Nn][Oy][Ox],
+                                                        T top_down_feature[Nn][Oy][Ox])
 {
     unsigned int col = blockIdx.x * TILE_SIZE + threadIdx.x;
     unsigned int row = blockIdx.y * TILE_SIZE + threadIdx.y;
@@ -28,25 +29,25 @@ __global__ void template_conv_and_bilinear_resid_kernel(T d_input[Ni][NyPad][NxP
             for (int y = 0; y < Stride; y++)
                 if (threadIdx.x < TILE_SIZE - 1)
                     for (int x = 0; x < Stride; x++) 
-                        input_cache[threadIdx.z][Stride * threadIdx.y + y][Stride * threadIdx.x + x] = d_input[threadIdx.z][row*Stride + y][col*Stride + x];
+                        input_cache[threadIdx.z][Stride * threadIdx.y + y][Stride * threadIdx.x + x] = d_backbone_input[threadIdx.z][row*Stride + y][col*Stride + x];
                 else
                     for (int x = 0; x < Stride + Kx - 1; x++) 
-                        input_cache[threadIdx.z][Stride * threadIdx.y + y][Stride * threadIdx.x + x] = d_input[threadIdx.z][row*Stride + y][col*Stride + x];
+                        input_cache[threadIdx.z][Stride * threadIdx.y + y][Stride * threadIdx.x + x] = d_backbone_input[threadIdx.z][row*Stride + y][col*Stride + x];
         else 
             for (int y = 0; y < Stride + Ky - 1; y++)
                 if (threadIdx.x < TILE_SIZE - 1)
                     for (int x = 0; x < Stride; x++) 
-                        input_cache[threadIdx.z][Stride * threadIdx.y + y][Stride * threadIdx.x + x] = d_input[threadIdx.z][row*Stride + y][col*Stride + x];
+                        input_cache[threadIdx.z][Stride * threadIdx.y + y][Stride * threadIdx.x + x] = d_backbone_input[threadIdx.z][row*Stride + y][col*Stride + x];
                 else
                     for (int x = 0; x < Stride + Kx - 1; x++) 
-                        input_cache[threadIdx.z][Stride * threadIdx.y + y][Stride * threadIdx.x + x] = d_input[threadIdx.z][row*Stride + y][col*Stride + x];
+                        input_cache[threadIdx.z][Stride * threadIdx.y + y][Stride * threadIdx.x + x] = d_backbone_input[threadIdx.z][row*Stride + y][col*Stride + x];
     }
 
     __syncthreads();
 
     T sum1 = 0.0f;
 
-    if (row < Oy && output_channel < Nn) {
+    if (col < Ox && row < Oy && output_channel < Nn) {
         #pragma unroll
         for (int i = 0; i < Ni; i++)
             #pragma unroll
@@ -57,9 +58,8 @@ __global__ void template_conv_and_bilinear_resid_kernel(T d_input[Ni][NyPad][NxP
                     sum1 += input_cache[i][threadIdx.y * Stride + y][(2*threadIdx.x) * Stride + x] * filter_val;
                 }
         
-        if (col < Ox) {
-            conv_output[output_channel][row][col] = sum1;
-        }
+        
+        lateral_feature[output_channel][row][col] = sum1;
     }
 
     __syncthreads();
@@ -71,18 +71,20 @@ __global__ void template_conv_and_bilinear_resid_kernel(T d_input[Ni][NyPad][NxP
 
             int x0 = static_cast<int>floor(origx);
             int y0 = static_cast<int>floor(origy);
-            int x1 = min(x0+1, NxPad);
-            int y1 = min(y0+1, NyPad);
+            int x1 = min(x0+1, Ox);
+            int y1 = min(y0+1, Oy);
 
             float dx = origx - x0;
             float dy = origy - y0;
 
-            float value = (conv_output[output_channel][y0][x0] * (1-dx)*(1-dy) + 
-                        conv_output[output_channel][y0][x1] * dx*(1-dy) + 
-                        conv_output[output_channel][y1][x0] * (1-dx)*dy + 
-                        conv_output[output_channel][y1][x1] * dx*xy);
+            float value = (previous_input[output_channel][y0][x0] * (1-dx)*(1-dy) + 
+                            previous_input[output_channel][y0][x1] * dx*(1-dy) + 
+                            previous_input[output_channel][y1][x0] * (1-dx)*dy + 
+                            previous_input[output_channel][y1][x1] * dx*xy);
 
-            bicubic_output[output_channel][y][x] = value;
+            top_down_feature[output_channel][y][x] = value;
+
+    lateral_feature[output_channel][row][col] += top_down_feature[output_channel][row][col];
 
 }
 

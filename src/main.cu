@@ -49,19 +49,19 @@ int main(int argc, char **argv) {
     randomizePosEmbeddings(pos_embeds);
     randomizeWindowEmbeddings(h_window_embeds);
     image_encoder::template_conv_2d<floatT, 16>(h_input, h_filters, h_convolution_output);
-    image_encoder::template_bicubic_upsample_and_window_embed<floatT, POS_EMBEDS, Nn, Oy, Ox, 16, WINDOW_EMBEDS>(pos_embeds, 
+    /*image_encoder::template_bicubic_upsample_and_window_embed<floatT, POS_EMBEDS, Nn, Oy, Ox, 16, WINDOW_EMBEDS>(pos_embeds, 
                                                                                                  h_output_bicubic, 
                                                                                                  h_convolution_output,
                                                                                                  h_window_embeds, 
                                                                                                  input_dims, 
-                                                                                                 output_dims);
+                                                                                                 output_dims);*/
 
     // Check output
     if (DEBUG) {
-        //convolution_cpu(h_input, h_filters, h_output_cpu);
-        bicubic_convolution_cpu(pos_embeds, Oy, Ox, h_output_cpu_bicubic);
-        //checkOutput(&h_output[0][0][0], &h_output_cpu[0][0][0], Ox * Oy * Nn);
-        checkOutput(&h_output_bicubic[0][0][0], &h_output_cpu_bicubic[0][0][0], Ox * Oy * Nn);
+        convolution_cpu(h_input, h_filters, h_output_cpu);
+        //bicubic_convolution_cpu(pos_embeds, Oy, Ox, h_output_cpu_bicubic);
+        checkOutput(&h_convolution_output[0][0][0], &h_output_cpu[0][0][0], Ox * Oy * Nn);
+        //checkOutput(&h_output_bicubic[0][0][0], &h_output_cpu_bicubic[0][0][0], Ox * Oy * Nn);
     } 
 
     return 0;
