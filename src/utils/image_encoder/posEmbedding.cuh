@@ -1,32 +1,87 @@
+#include <cmath>
+#include "cuda_runtime.h"
+
+#include "utils/common.h"
+#include "utils/gpu_utils.cuh"
+
 
 #define EPSILON 1e-6
 #define TEMPERATURE 10000
-#define NUM_POS_FEATS 50
+#define numPosFeats 128
+
+
+namespace image_encoder {       
 
 template<typename T, typename accFloatT>
-__global__ void posEmbeddingKernel(T d_input[Ni][Ny][Nx], 
-                                   T d_output[Ni][Ny][Nx],
-                                   T d_dimensions_x[Nx],
-                                   T d_dimensions_y[Ny],
-                                   int numPosFeats);
+__global__ void pos_embedding_kernel(T* pos_embeds,
+                                    accFloatT* d_dimensions_x,
+                                    accFloatT* d_dimensions_y,
+                                    const int nx,
+                                    const int ny)
 {
     int x = threadIdx.x + blockIdx.x * blockDim.x;
     int y = threadIdx.y + blockIdx.y * blockDim.y ;
-    int n = threadIdx.z + blockIdx.z * blockDim.z;
+    int pos_feat = threadIdx.z + blockIdx.z * blockDim.z;
 
-    accFloatT y_embed = (y+1)/(Ny+EPSILON);
-    accFloatT x_embed = (x+1)/(Nx+EPSILON);
 
-    T pos_embeds_x[numPosFeats];
-    T pos_embeds_y[numPosFeats];
-    for (int i = 0; i < numPosFeats; i++)
+    accFloatT y_embed = (y+1)/(ny+EPSILON);
+    accFloatT x_embed = (x+1)/(nx+EPSILON);
+
+    if (pos_feat < numPosFeats && x == 0 && y == 0)
     {
-        pos_embeds_y[i] = y_embed / d_dimensions_y[i];
-        pos_embeds_x[i] = x_embed / d_dimensions_x[i];
+        accFloatT power_term = 2*(floorf((pos_feat)/2))/numPosFeats;
+        d_dimensions_x[pos_feat] = std::pow(TEMPERATURE, power_term);
+        d_dimensions_y[pos_feat] = std::pow(TEMPERATURE, power_term);
     }
 
-    
+    __syncthreads();
+
+    if (pos_feat < numPosFeats && x < nx && y < ny)
+    {
+        if (pos_feat%2 == 0 && pos_feat < numPosFeats/2)
+        {
+            pos_embeds[pos_feat * (Ny * Nx) + y * Nx + x] = static_cast<T>(std::sin(y_embed / d_dimensions_y[pos_feat]));
+        }
+        else if (pos_feat%2 == 1 && pos_feat < numPosFeats/2)
+        {
+            pos_embeds[pos_feat * (Ny * Nx) + y * Nx + x] = static_cast<T>(std::cos(y_embed / d_dimensions_y[pos_feat]));
+        }
+
+        else if (pos_feat%2 == 0 && pos_feat >= numPosFeats/2)
+        {
+            pos_embeds[pos_feat * (Ny * Nx) + y * Nx + x] = static_cast<T>(std::sin(x_embed / d_dimensions_x[pos_feat]));
+        }
+
+        else if (pos_feat%2 == 1 && pos_feat >= numPosFeats/2)
+        {
+            pos_embeds[pos_feat * (Ny * Nx) + y * Nx + x] = static_cast<T>(std::cos(x_embed / d_dimensions_x[pos_feat]));
+        }
+    }
+}
 
 
+
+template<typename T, typename accFloatT>
+T* template_pos_embedding(const int nx, const int ny)
+{
+    T* h_pos_embeds;
+    T* d_pos_embeds;
+    accFloatT* d_dimensions_x;
+    accFloatT* d_dimensions_y;
+
+    cudaMallocHost((void**)&h_pos_embeds, numPosFeats*2*ny*nx*sizeof(T));
+    cudaMalloc((void**)&d_pos_embeds, numPosFeats*2*ny*nx*sizeof(T));
+    cudaMalloc((void**)&d_dimensions_x, numPosFeats*sizeof(accFloatT));
+    cudaMalloc((void**)&d_dimensions_y, numPosFeats*sizeof(accFloatT));
+
+    dim3 blockSize(2*TILE_SIZE, 2*TILE_SIZE, 1);
+    dim3 gridSize((nx+2*TILE_SIZE-1)/(2*TILE_SIZE), (ny+2*TILE_SIZE-1)/(2*TILE_SIZE), numPosFeats);
+
+    pos_embedding_kernel<<<gridSize, blockSize>>>(d_pos_embeds, d_dimensions_x, d_dimensions_y, nx, ny);
+
+    cudaMemcpy(h_pos_embeds, d_pos_embeds, numPosFeats*2*ny*nx*sizeof(T), cudaMemcpyDeviceToHost);
+
+    return h_pos_embeds;
+}
 
 }
