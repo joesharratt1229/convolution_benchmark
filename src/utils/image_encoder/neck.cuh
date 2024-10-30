@@ -1,7 +1,7 @@
-#ifndef BACKBONE_CUH
-#define BACKBONE_CUH
+#ifndef NECK_CUH
+#define NECK_CUH
 
-
+#include "utils/common.h"
 
 namespace image_encoder {
 
@@ -9,14 +9,14 @@ namespace image_encoder {
 #define STRIDE 2
 #define PAD 1
 
-__constant__ T d_filters[Nn][Ni][Ky][Kx];
+__constant__ floatT d_filters[Nn][Ni][Ky][Kx];
 
 
-template<typename T, int Ni, int Oy, int Ox, int Nn>
-__global__ void template_conv_and_bilinear_resid_kernel(T d_backbone_input[Ni][Oy][Ox],  
-                                                        T previous_input[Nn][Oy/2][Ox/2],
-                                                        T lateral_feature[Nn][Oy][Ox],
-                                                        T top_down_feature[Nn][Oy][Ox])
+template<typename T, int Ni, int Oy, int Ox, int Nn, bool has_previous_input = false>
+__global__ void conv_and_bilinear_resid_kernel(T* d_backbone_input,  
+                                               T* previous_input,
+                                               T* lateral_feature,
+                                               T* top_down_feature)
 {
     unsigned int col = blockIdx.x * TILE_SIZE + threadIdx.x;
     unsigned int row = blockIdx.y * TILE_SIZE + threadIdx.y;
@@ -28,19 +28,31 @@ __global__ void template_conv_and_bilinear_resid_kernel(T d_backbone_input[Ni][O
         if (threadIdx.y < TILE_SIZE - 1)
             for (int y = 0; y < Stride; y++)
                 if (threadIdx.x < TILE_SIZE - 1)
-                    for (int x = 0; x < Stride; x++) 
-                        input_cache[threadIdx.z][Stride * threadIdx.y + y][Stride * threadIdx.x + x] = d_backbone_input[threadIdx.z][row*Stride + y][col*Stride + x];
+                    for (int x = 0; x < Stride; x++)
+                        int index = threadIdx.z * (input_height * input_width) + 
+                                 (row * Stride + y) * input_width + 
+                                 (col * Stride + x);
+                        input_cache[threadIdx.z][Stride * threadIdx.y + y][Stride * threadIdx.x + x] =  d_backbone_input[index]
                 else
                     for (int x = 0; x < Stride + Kx - 1; x++) 
-                        input_cache[threadIdx.z][Stride * threadIdx.y + y][Stride * threadIdx.x + x] = d_backbone_input[threadIdx.z][row*Stride + y][col*Stride + x];
+                        int index = threadIdx.z * (input_height * input_width) + 
+                                 (row * Stride + y) * input_width + 
+                                 (col * Stride + x);
+                        input_cache[threadIdx.z][Stride * threadIdx.y + y][Stride * threadIdx.x + x] = d_backbone_input[index];
         else 
             for (int y = 0; y < Stride + Ky - 1; y++)
                 if (threadIdx.x < TILE_SIZE - 1)
                     for (int x = 0; x < Stride; x++) 
-                        input_cache[threadIdx.z][Stride * threadIdx.y + y][Stride * threadIdx.x + x] = d_backbone_input[threadIdx.z][row*Stride + y][col*Stride + x];
+                        int index = threadIdx.z * (input_height * input_width) + 
+                                 (row * Stride + y) * input_width + 
+                                 (col * Stride + x);
+                        input_cache[threadIdx.z][Stride * threadIdx.y + y][Stride * threadIdx.x + x] = d_backbone_input[index];
                 else
                     for (int x = 0; x < Stride + Kx - 1; x++) 
-                        input_cache[threadIdx.z][Stride * threadIdx.y + y][Stride * threadIdx.x + x] = d_backbone_input[threadIdx.z][row*Stride + y][col*Stride + x];
+                        int index = threadIdx.z * (input_height * input_width) +    
+                                 (row * Stride + y) * input_width + 
+                                 (col * Stride + x);
+                        input_cache[threadIdx.z][Stride * threadIdx.y + y][Stride * threadIdx.x + x] = d_backbone_input[index];
     }
 
     __syncthreads();
@@ -64,6 +76,8 @@ __global__ void template_conv_and_bilinear_resid_kernel(T d_backbone_input[Ni][O
 
     __syncthreads();
 
+
+
     for (int y = 2*row; y < 2*row + 1; row++)
         for (int x = 2*col; x<2*col+1; col++)
             float origx = x/2;
@@ -84,8 +98,7 @@ __global__ void template_conv_and_bilinear_resid_kernel(T d_backbone_input[Ni][O
 
             top_down_feature[output_channel][y][x] = value;
 
-    lateral_feature[output_channel][row][col] += top_down_feature[output_channel][row][col];
-
+    previous_input[output_channel][row][col] = lateral_feature[output_channel][row][col] + top_down_feature[output_channel][row][col];
 }
 
 }
