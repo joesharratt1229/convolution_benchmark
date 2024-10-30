@@ -5,6 +5,7 @@
 #include "utils/image_encoder/convolution.cuh"
 #include "utils/image_encoder/upsample.cuh"
 #include "utils/image_encoder/posEmbedding.cuh"
+#include "utils/image_encoder/neck.cuh"
 #include "utils/test_sam.cpp"
 
 using namespace std;
@@ -44,7 +45,7 @@ int main(int argc, char **argv) {
 
     dims input_dims = {POS_EMBEDS, POS_EMBEDS, Nn};
     dims output_dims = {Ox, Oy, Nn};
-    randomizeFilters(h_filters);
+    randomizeFilters(h_filters);            
     randomizeInput(h_input);
     padInput(h_input);
     randomizePosEmbeddings(pos_embeds);
@@ -56,21 +57,17 @@ int main(int argc, char **argv) {
                                                                                                  h_window_embeds, 
                                                                                                  input_dims, 
                                                                                                  output_dims);*/
+    
 
-    floatT* h_pos_embeds = image_encoder::template_pos_embedding<floatT, accFloatT>(Nx, Ny);
-
-    //for (int i = 0; i < 10; i++) {
-     //   accFloatT val = static_cast<accFloatT>(h_pos_embeds[i*Nx]);
-     //   printf("%f\n", val);
-    //}
+    //floatT* h_pos_embeds = image_encoder::template_pos_embedding<floatT, accFloatT>(Nx, Ny);
                                                                                             
 
     // Check output
     if (DEBUG) {
-        //convolution_cpu(h_input, h_filters, h_output_cpu);
-        //bicubic_convolution_cpu(pos_embeds, Oy, Ox, h_output_cpu_bicubic);
-        //checkOutput(&h_convolution_output[0][0][0], &h_output_cpu[0][0][0], Ox * Oy * Nn);
-        //checkOutput(&h_output_bicubic[0][0][0], &h_output_cpu_bicubic[0][0][0], Ox * Oy * Nn);
+        convolution_cpu(h_input, h_filters, h_output_cpu);
+        bicubic_convolution_cpu(pos_embeds, Oy, Ox, h_output_cpu_bicubic);
+        checkOutput(&h_convolution_output[0][0][0], &h_output_cpu[0][0][0], Ox * Oy * Nn);
+        checkOutput(&h_output_bicubic[0][0][0], &h_output_cpu_bicubic[0][0][0], Ox * Oy * Nn);
     } 
 
     return 0;

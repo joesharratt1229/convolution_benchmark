@@ -1,4 +1,6 @@
 #include <cmath>
+#include <vector>
+#include <algorithm>
 
 template<typename T>
 __host__
@@ -93,4 +95,43 @@ void bicubic_convolution_cpu(T pos_embeds[Nn][POS_EMBEDS][POS_EMBEDS], const int
             }
         }
     }
+}
+
+
+static std::vector<float> upscale2x(const std::vector<float>& input,
+                                   int width,
+                                   int height,
+                                   int channels) {
+    int outWidth = width * 2;
+    int outHeight = height * 2;
+    std::vector<float> output(outWidth * outHeight * channels);
+
+    for (int y = 0; y < outHeight; ++y) {
+        for (int x = 0; x < outWidth; ++x) {
+            float srcX = x * 0.5f;
+            float srcY = y * 0.5f;
+
+            int x0 = static_cast<int>(srcX);
+            int y0 = static_cast<int>(srcY);
+            int x1 = std::min(x0 + 1, width - 1);
+            int y1 = std::min(y0 + 1, height - 1);
+
+            float wx = srcX - x0;
+            float wy = srcY - y0;
+
+            for (int c = 0; c < channels; ++c) {
+                float v00 = input[(y0 * width + x0) * channels + c];
+                float v10 = input[(y0 * width + x1) * channels + c];
+                float v01 = input[(y1 * width + x0) * channels + c];
+                float v11 = input[(y1 * width + x1) * channels + c];
+
+                output[(y * outWidth + x) * channels + c] = 
+                    v00 * (1 - wx) * (1 - wy) +
+                    v10 * wx * (1 - wy) +
+                    v01 * (1 - wx) * wy +
+                    v11 * wx * wy;
+            }
+        }
+    }
+    return output;
 }

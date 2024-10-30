@@ -67,14 +67,14 @@ __global__ void conv_2d_kernel(T d_input[Ni][NyPad][NxPad],
 
 
 
-template<typename T, int CHANNEL_SIZE>
+template<typename T, int channel_size>
 __host__ void template_conv_2d(T h_input[Ni][NyPad][NxPad], 
                                T h_filters[Nn][Ni][Ky][Kx], 
                                T h_output[Nn][Oy][Ox])
 {
     unsigned int Ox2 = (Ox + 1) / 2;
 
-    dim3 threadsPerBlock(TILE_SIZE, TILE_SIZE, CHANNEL_SIZE);
+    dim3 threadsPerBlock(TILE_SIZE, TILE_SIZE, channel_size);
     dim3 blocksPerGrid((Ox2 + threadsPerBlock.x - 1) / threadsPerBlock.x,
                        (Oy + threadsPerBlock.y - 1) / threadsPerBlock.y,
                        (Nn + threadsPerBlock.z - 1) / threadsPerBlock.z);
