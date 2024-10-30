@@ -10,13 +10,16 @@ namespace image_encoder {
 __constant__ floatT d_filters[Nn][Ni][Ky][Kx];
 
 
-template<typename T, int tile_size, int input_tile_size, int stride,bool has_previous_input = false>
+template<typename T>
 __global__ void conv_and_bilinear_resid_kernel(T* d_backbone_input,  
                                                T* previous_input,
                                                T* lateral_feature,
                                                T* top_down_feature,
                                                dims lower_scale_dims,
-                                               dims upper_scale_dims)
+                                               dims upper_scale_dims,
+                                               int tile_size,
+                                               int input_tile_size,
+                                               int stride)
 {
     unsigned int col = blockIdx.x * tile_size + threadIdx.x;
     unsigned int row = blockIdx.y * tile_size + threadIdx.y;
@@ -148,7 +151,13 @@ void template_conv_and_bilinear_resid(floatT* backbone_input,
     int input_tile_size = 2*tile_size + Ky - 1;
     int stride = 1;
 
-   dim
+   dim3 threadsPerBlock(tile_size, tile_size, 1);
+   dim3 blocksPerGrid((upper_scale_dims.width + tile_size - 1) / tile_size, (upper_scale_dims.height + tile_size - 1) / tile_size, upper_scale_dims.channel);
+
+   conv_and_bilinear_resid_kernel<floatT><<<<blocksPerGrid, threadsPerBlock>>>(d_backbone_input, d_previous_input, d_lateral_feature, d_top_down_feature, lower_scale_dims, upper_scale_dims, tile_size, input_tile_size, stride);
+
+   gpuErrchk(cudaMemcpy(lateral_feature, d_lateral_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(floatT), cudaMemcpyDeviceToHost));
+   gpuErrchk(cudaMemcpy(top_down_feature, d_top_down_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(floatT), cudaMemcpyDeviceToHost));
 
 
 
