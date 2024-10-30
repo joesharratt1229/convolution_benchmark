@@ -59,10 +59,10 @@ int main(int argc, char **argv) {
 
     floatT* h_pos_embeds = image_encoder::template_pos_embedding<floatT, accFloatT>(Nx, Ny);
 
-    for (int i = 0; i < 50*2; i++) {
-        accFloatT val = static_cast<accFloatT>(h_pos_embeds[i*(Ny*Nx)]);
-        printf("%f\n", val);
-    }
+    //for (int i = 0; i < 10; i++) {
+     //   accFloatT val = static_cast<accFloatT>(h_pos_embeds[i*Nx]);
+     //   printf("%f\n", val);
+    //}
                                                                                             
 
     // Check output

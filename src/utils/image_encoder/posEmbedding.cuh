@@ -24,8 +24,8 @@ __global__ void pos_embedding_kernel(T* pos_embeds,
     int pos_feat = threadIdx.z + blockIdx.z * blockDim.z;
 
 
-    accFloatT y_embed = (y+1)/(ny+EPSILON);
-    accFloatT x_embed = (x+1)/(nx+EPSILON);
+    accFloatT y_embed = y+1;
+    accFloatT x_embed = x+1;
 
     if (pos_feat < numPosFeats && x == 0 && y == 0)
     {
@@ -38,24 +38,13 @@ __global__ void pos_embedding_kernel(T* pos_embeds,
 
     if (pos_feat < numPosFeats && x < nx && y < ny)
     {
-        if (pos_feat%2 == 0 && pos_feat < numPosFeats/2)
-        {
-            pos_embeds[pos_feat * (Ny * Nx) + y * Nx + x] = static_cast<T>(std::sin(y_embed / d_dimensions_y[pos_feat]));
-        }
-        else if (pos_feat%2 == 1 && pos_feat < numPosFeats/2)
-        {
-            pos_embeds[pos_feat * (Ny * Nx) + y * Nx + x] = static_cast<T>(std::cos(y_embed / d_dimensions_y[pos_feat]));
-        }
+       const bool is_even = pos_feat%2 == 0;
+       const bool is_first_half = pos_feat < numPosFeats/2;
+       const accFloatT embed_val = is_first_half ? y_embed : x_embed;
+       const accFloatT dim = is_first_half ? d_dimensions_y[pos_feat] : d_dimensions_x[pos_feat];
 
-        else if (pos_feat%2 == 0 && pos_feat >= numPosFeats/2)
-        {
-            pos_embeds[pos_feat * (Ny * Nx) + y * Nx + x] = static_cast<T>(std::sin(x_embed / d_dimensions_x[pos_feat]));
-        }
-
-        else if (pos_feat%2 == 1 && pos_feat >= numPosFeats/2)
-        {
-            pos_embeds[pos_feat * (Ny * Nx) + y * Nx + x] = static_cast<T>(std::cos(x_embed / d_dimensions_x[pos_feat]));
-        }
+       accFloatT val = is_even ? std::sin(embed_val / dim) : std::cos(embed_val / dim);
+       pos_embeds[pos_feat * (ny * nx) + y * nx + x] = static_cast<T>(val);
     }
 }
 
@@ -74,8 +63,8 @@ T* template_pos_embedding(const int nx, const int ny)
     cudaMalloc((void**)&d_dimensions_x, numPosFeats*sizeof(accFloatT));
     cudaMalloc((void**)&d_dimensions_y, numPosFeats*sizeof(accFloatT));
 
-    dim3 blockSize(2*TILE_SIZE, 2*TILE_SIZE, 1);
-    dim3 gridSize((nx+2*TILE_SIZE-1)/(2*TILE_SIZE), (ny+2*TILE_SIZE-1)/(2*TILE_SIZE), numPosFeats);
+    dim3 blockSize(4*TILE_SIZE, 4*TILE_SIZE, 1);
+    dim3 gridSize((nx+4*TILE_SIZE-1)/(4*TILE_SIZE), (ny+4*TILE_SIZE-1)/(4*TILE_SIZE), numPosFeats);
 
     pos_embedding_kernel<<<gridSize, blockSize>>>(d_pos_embeds, d_dimensions_x, d_dimensions_y, nx, ny);
 
