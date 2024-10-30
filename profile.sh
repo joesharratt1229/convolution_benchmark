@@ -1,0 +1,1 @@
+sudo ncu -f --set detailed --export report.nsight-cuprof-report ./conv2b
