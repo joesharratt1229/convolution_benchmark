@@ -4,7 +4,7 @@
 #include "utils/common.h" 
 #include "utils/image_encoder/convolution.cuh"
 #include "utils/image_encoder/upsample.cuh"
-//#include "utils/image_encoder/posEmbedding.cuh"
+#include "utils/image_encoder/posEmbedding.cuh"
 //#include "utils/image_encoder/neck.cuh"
 #include "utils/test_sam.cpp"
 
@@ -59,7 +59,7 @@ int main(int argc, char **argv) {
                                                                      output_dims);
     
 
-    //floatT* h_pos_embeds = image_encoder::template_pos_embedding<floatT, accFloatT>(Nx, Ny);
+    floatT* h_pos_embeds = image_encoder::template_pos_embedding<floatT, accFloatT>(Nx, Ny);
     //image_encoder::template_conv_and_bilinear_resid(h_input, h_filters, h_output_cpu, h_output_cpu_bicubic, pos_embeds, h_window_embeds, input_dims, output_dims);
                                                                                             
 
