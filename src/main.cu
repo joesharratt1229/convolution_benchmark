@@ -4,8 +4,8 @@
 #include "utils/common.h" 
 #include "utils/image_encoder/convolution.cuh"
 #include "utils/image_encoder/upsample.cuh"
-#include "utils/image_encoder/posEmbedding.cuh"
-#include "utils/image_encoder/neck.cuh"
+//#include "utils/image_encoder/posEmbedding.cuh"
+//#include "utils/image_encoder/neck.cuh"
 #include "utils/test_sam.cpp"
 
 using namespace std;
@@ -43,24 +43,24 @@ int main(int argc, char **argv) {
     static floatT pos_embeds[Nn][POS_EMBEDS][POS_EMBEDS];
     static floatT h_window_embeds[Nn][WINDOW_EMBEDS][WINDOW_EMBEDS];
 
-    dims input_dims = {32, 32, 16};
-    dims output_dims = {64, 64, 8};
+    dims input_dims = {POS_EMBEDS, POS_EMBEDS, Nn};
+    dims output_dims = {Ox, Oy, Nn};
     randomizeFilters(h_filters);            
     randomizeInput(h_input);
     padInput(h_input);
     randomizePosEmbeddings(pos_embeds);
     randomizeWindowEmbeddings(h_window_embeds);
-    //image_encoder::template_conv_2d<floatT, 16>(h_input, h_filters, h_convolution_output);
-    /*image_encoder::template_bicubic_upsample_and_window_embed<floatT, POS_EMBEDS, Nn, Oy, Ox, 16, WINDOW_EMBEDS>(pos_embeds, 
-                                                                                                 h_output_bicubic, 
-                                                                                                 h_convolution_output,
-                                                                                                 h_window_embeds, 
-                                                                                                 input_dims, 
-                                                                                                 output_dims);*/
+    image_encoder::template_conv_2d<floatT, 7>(h_input, h_filters, h_convolution_output);
+    image_encoder::template_bicubic_upsample_and_window_embed<floatT>(&pos_embeds[0][0][0], 
+                                                                     &h_output_bicubic[0][0][0], 
+                                                                     &h_convolution_output[0][0][0],
+                                                                     &h_window_embeds[0][0][0], 
+                                                                     input_dims, 
+                                                                     output_dims);
     
 
     //floatT* h_pos_embeds = image_encoder::template_pos_embedding<floatT, accFloatT>(Nx, Ny);
-    image_encoder::template_conv_and_bilinear_resid(h_input, h_filters, h_output_cpu, h_output_cpu_bicubic, pos_embeds, h_window_embeds, input_dims, output_dims);
+    //image_encoder::template_conv_and_bilinear_resid(h_input, h_filters, h_output_cpu, h_output_cpu_bicubic, pos_embeds, h_window_embeds, input_dims, output_dims);
                                                                                             
 
     // Check output

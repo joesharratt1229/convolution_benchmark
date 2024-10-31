@@ -19,7 +19,7 @@
 #define O_MEM_SIZE (O_SIZE * sizeof(floatT))
 #define F_MEM_SIZE (F_SIZE * sizeof(floatT))
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
-#define TILE_SIZE 8
+//#define TILE_SIZE 8
 #define INPUT_TILE_X (TILE_SIZE*StrideX + Kx - 1)   
 #define INPUT_TILE_Y (TILE_SIZE*StrideY + Ky - 1)
 #define POS_EMBEDS 14
@@ -33,8 +33,6 @@ typedef struct {
 } dims;
 
 
-
-
 #if defined(ENABLE_FP32)
 typedef float floatT;
 #elif defined(ENABLE_FP16)
@@ -44,5 +42,6 @@ typedef __nv_bfloat16 floatT;
 #endif
 
 typedef float accFloatT;
+
 
 #endif
