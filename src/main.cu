@@ -50,7 +50,7 @@ int main(int argc, char **argv) {
     padInput(h_input);
     randomizePosEmbeddings(pos_embeds);
     randomizeWindowEmbeddings(h_window_embeds);
-    image_encoder::template_conv_2d<floatT, 7>(h_input, h_filters, h_convolution_output);
+    image_encoder::template_conv_2d<floatT, 7>(&h_input[0][0][0], &h_convolution_output[0][0][0], h_filters);
     image_encoder::template_bicubic_upsample_and_window_embed<floatT>(&pos_embeds[0][0][0], 
                                                                      &h_output_bicubic[0][0][0], 
                                                                      &h_convolution_output[0][0][0],
@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
 
     floatT* h_pos_embeds = image_encoder::template_pos_embedding<floatT, accFloatT>(Nx, Ny);
     //image_encoder::template_conv_and_bilinear_resid(h_input, h_filters, h_output_cpu, h_output_cpu_bicubic, pos_embeds, h_window_embeds, input_dims, output_dims);
-                                                                                            
+
 
     // Check output
     if (DEBUG) {

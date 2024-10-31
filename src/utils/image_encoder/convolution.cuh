@@ -10,35 +10,52 @@
 namespace image_encoder {   
 
 template<typename T, int kernel_size>
-__global__ void conv_2d_kernel(T d_input[Ni][NyPad][NxPad], 
-                               T d_filters[Nn][Ni][Ky][Kx], 
-                               T d_output[Nn][Oy][Ox])
+__global__ void conv_2d_kernel(T* d_input, 
+                               T* d_output,
+                               T d_filters[Nn][Ni][Ky][Kx],
+                               dims input_dims,
+                               dims output_dims)
 {
     using Config = TileConfig<kernel_size>;
 
     unsigned int col = 2*(blockIdx.x * blockDim.x + threadIdx.x);
     unsigned int row = blockIdx.y * blockDim.y + threadIdx.y;
     unsigned int output_channel = blockIdx.z * blockDim.z + threadIdx.z;
-
     __shared__ T input_cache[Ni][Config::INPUT_TILE_SIZE][Config::INPUT_TILE_SIZE*2];
 
-    if (threadIdx.z < Ni && Config::STRIDE * threadIdx.y < Config::INPUT_TILE_SIZE && Config::STRIDE * threadIdx.x < Config::INPUT_TILE_SIZE) {
+    if (threadIdx.z < input_dims.channel && Config::STRIDE * threadIdx.y < Config::INPUT_TILE_SIZE && Config::STRIDE * threadIdx.x < Config::INPUT_TILE_SIZE) {
         if (threadIdx.y < blockDim.y - 1)
             for (int y = 0; y < Config::STRIDE; y++)
                 if (threadIdx.x < blockDim.x - 1)
-                    for (int x = 0; x < 2* Config::STRIDE; x++) 
-                        input_cache[threadIdx.z][Config::STRIDE * threadIdx.y + y][2*Config::STRIDE * threadIdx.x + x] = d_input[threadIdx.z][row*Config::STRIDE + y][col*Config::STRIDE + x];
+                    for (int x = 0; x < 2* Config::STRIDE; x++) {
+                        int index = threadIdx.z * (input_dims.height * input_dims.width) + 
+                                (row * Config::STRIDE + y) * input_dims.width + 
+                                (col * Config::STRIDE + x);
+                        input_cache[threadIdx.z][Config::STRIDE * threadIdx.y + y][2*Config::STRIDE * threadIdx.x + x] = d_input[index];
+                    }
                 else
-                    for (int x = 0; x < 2* Config::STRIDE + Config::KERNEL_SIZE - 1; x++) 
-                        input_cache[threadIdx.z][Config::STRIDE * threadIdx.y + y][2*Config::STRIDE * threadIdx.x + x] = d_input[threadIdx.z][row*Config::STRIDE + y][col*Config::STRIDE + x];
+                    for (int x = 0; x < 2* Config::STRIDE + Config::KERNEL_SIZE - 1; x++) {
+                        int index = threadIdx.z * (input_dims.height * input_dims.width) + 
+                                (row * Config::STRIDE + y) * input_dims.width + 
+                                (col * Config::STRIDE + x);
+                        input_cache[threadIdx.z][Config::STRIDE * threadIdx.y + y][2*Config::STRIDE * threadIdx.x + x] = d_input[index];
+                    }
         else 
             for (int y = 0; y < Config::STRIDE + Config::KERNEL_SIZE - 1; y++)
                 if (threadIdx.x < Config::TILE_SIZE - 1)
-                    for (int x = 0; x < 2* Config::STRIDE; x++) 
-                        input_cache[threadIdx.z][Config::STRIDE * threadIdx.y + y][2*Config::STRIDE * threadIdx.x + x] = d_input[threadIdx.z][row*Config::STRIDE + y][col*Config::STRIDE + x];
+                    for (int x = 0; x < 2* Config::STRIDE; x++) {
+                        int index = threadIdx.z * (input_dims.height * input_dims.width) + 
+                                (row * Config::STRIDE + y) * input_dims.width + 
+                                (col * Config::STRIDE + x);
+                        input_cache[threadIdx.z][Config::STRIDE * threadIdx.y + y][2*Config::STRIDE * threadIdx.x + x] = d_input[index];
+                    }
                 else
-                    for (int x = 0; x < 2* Config::STRIDE + Config::KERNEL_SIZE - 1; x++) 
-                        input_cache[threadIdx.z][Config::STRIDE * threadIdx.y + y][2*Config::STRIDE * threadIdx.x + x] = d_input[threadIdx.z][row*Config::STRIDE + y][col*Config::STRIDE + x];
+                    for (int x = 0; x < 2* Config::STRIDE + Config::KERNEL_SIZE - 1; x++) {
+                        int index = threadIdx.z * (input_dims.height * input_dims.width) + 
+                                (row * Config::STRIDE + y) * input_dims.width + 
+                                (col * Config::STRIDE + x);
+                        input_cache[threadIdx.z][Config::STRIDE * threadIdx.y + y][2*Config::STRIDE * threadIdx.x + x] = d_input[index];
+                    }
     }
     
     __syncthreads();
@@ -46,7 +63,7 @@ __global__ void conv_2d_kernel(T d_input[Ni][NyPad][NxPad],
     T sum1 = 0.0f;
     T sum2 = 0.0f;
 
-    if (row < Oy && output_channel < Nn) {
+    if (row < output_dims.height && output_channel < Nn) {
         #pragma unroll
         for (int i = 0; i < Ni; i++)
             #pragma unroll
@@ -60,10 +77,10 @@ __global__ void conv_2d_kernel(T d_input[Ni][NyPad][NxPad],
                 }
         
         if (col < Ox) {
-            d_output[output_channel][row][col] = sum1;
+            d_output[output_channel * output_dims.height * output_dims.width + row * output_dims.width + col] = sum1;
         }
         if (col+1 < Ox) {
-            d_output[output_channel][row][col+1] = sum2;
+            d_output[output_channel * output_dims.height * output_dims.width + row * output_dims.width + col + 1] = sum2;
         }
     }
 }
@@ -71,9 +88,9 @@ __global__ void conv_2d_kernel(T d_input[Ni][NyPad][NxPad],
 
 
 template<typename T, int kernel_size>
-__host__ void template_conv_2d(T h_input[Ni][NyPad][NxPad], 
-                               T h_filters[Nn][Ni][kernel_size][kernel_size], 
-                               T h_output[Nn][Oy][Ox])
+__host__ void template_conv_2d(T* h_input, 
+                               T* h_output,
+                               T h_filters[Nn][Ni][Ky][Kx])
 {
     using Config = TileConfig<kernel_size>;
     unsigned int Ox2 = (Ox + 1) / 2;
@@ -83,9 +100,12 @@ __host__ void template_conv_2d(T h_input[Ni][NyPad][NxPad],
                        (Oy + threadsPerBlock.y - 1) / threadsPerBlock.y,
                        (Nn + threadsPerBlock.z - 1) / threadsPerBlock.z);
 
-    T (*d_input)[NyPad][NxPad];
-    T (*d_output)[Oy][Ox];
+    T* d_input;
+    T* d_output;
     T (*d_filters)[Ni][Ky][Kx];
+
+    dims input_dims = {NxPad, NyPad, Ni};
+    dims output_dims = {Ox, Oy, Nn};
 
 
     cudaMalloc((void**)&d_input, I_MEM_SIZE);
@@ -103,7 +123,7 @@ __host__ void template_conv_2d(T h_input[Ni][NyPad][NxPad],
     cudaStreamCreate(&stream);
 
 
-    conv_2d_kernel<T, kernel_size><<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_input, d_filters, d_output);
+    conv_2d_kernel<T, kernel_size><<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_input, d_output, d_filters, input_dims, output_dims);
     gpuErrchk(cudaDeviceSynchronize());
 
     // Copy output : device -> host
