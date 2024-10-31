@@ -19,9 +19,6 @@
 #define O_MEM_SIZE (O_SIZE * sizeof(floatT))
 #define F_MEM_SIZE (F_SIZE * sizeof(floatT))
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
-//#define TILE_SIZE 8
-#define INPUT_TILE_X (TILE_SIZE*StrideX + Kx - 1)   
-#define INPUT_TILE_Y (TILE_SIZE*StrideY + Ky - 1)
 #define POS_EMBEDS 14
 #define nStreams 8
 #define WINDOW_EMBEDS 8
