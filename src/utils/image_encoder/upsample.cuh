@@ -118,11 +118,13 @@ template <typename T>
 __host__ void template_bicubic_upsample_and_window_embed(T* pos_embeds, 
                                                          T* pos_embeds_output, 
                                                          T* convolution_output,
-                                                         T* window_embeds,
-                                                         dims pos_embeds_dims,
-                                                         dims output_dims) {                                
+                                                         T* window_embeds) {                                
     
 
+
+    dims pos_embeds_dims = {POS_EMBEDS, POS_EMBEDS, Nn};
+    dims output_dims = {Ox, Oy, Nn};
+    
     accFloatT scale_factor_x = output_dims.width / pos_embeds_dims.width;
     accFloatT scale_factor_y = output_dims.height / pos_embeds_dims.height;
 
