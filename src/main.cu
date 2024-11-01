@@ -35,7 +35,8 @@ int main(int argc, char **argv) {
 
 
     static floatT h_input[Ni][NyPad][NxPad];
-    static floatT h_previous_input[Ni][NyPad/2][NxPad/2];
+    static floatT h_input_1x1[N1x1][Ny][Nx];
+    static floatT h_previous_input[Nn][Ny/2][Nx/2];
 
     static floatT h_convolution_output[Nn][Oy][Ox];
     static floatT h_output_cpu[Nn][Oy][Ox];
@@ -44,17 +45,20 @@ int main(int argc, char **argv) {
 
     static floatT h_filters_7x7[Nn][Ni][Ky][Kx]; 
 
-    static floatT h_1x1_output[N1x1][NyPad][NxPad];
-    static floatT h_1x1_output_cpu[N1x1][NyPad][NxPad];
-    static floatT h_filters_1x1[Ni][N1x1][1][1];
+    static floatT h_1x1_output[Nn][Ny][Nx];
+    static floatT h_1x1_output_cpu[Nn][Ny][Nx];
+    static floatT h_backbone_output[Nn][Ny][Nx];
+    static floatT h_backbone_output_cpu[Nn][Ny][Nx];
+    static floatT h_filters_1x1[Nn][N1x1][1][1];
 
     static floatT pos_embeds[Nn][POS_EMBEDS][POS_EMBEDS];
     static floatT h_window_embeds[Nn][WINDOW_EMBEDS][WINDOW_EMBEDS];
 
 
     randomizeFilters<floatT, Nn, Ni, Ky, Kx>(h_filters_7x7);  
-    randomizeFilters<floatT, Ni, 64, 1, 1>(h_filters_1x1);
+    randomizeFilters<floatT, Nn, N1x1, 1, 1>(h_filters_1x1);
     randomizeInput<floatT, Ni, NyPad, NxPad>(h_input);
+    randomizeInput<floatT, N1x1, Ny, Nx>(h_input_1x1);
     padInput(h_input);
     randomizePosEmbeddings(pos_embeds);
     randomizeWindowEmbeddings(h_window_embeds);
@@ -68,19 +72,23 @@ int main(int argc, char **argv) {
     
 
     //floatT* h_pos_embeds = image_encoder::template_pos_embedding<floatT, accFloatT>(Nx, Ny);
-    image_encoder::template_conv_and_bilinear_resid<floatT, 1>(&h_input[0][0][0],
-                                                               NULL,
-                                                               NULL,
+    image_encoder::template_conv_and_bilinear_resid<floatT, 1>(&h_input_1x1[0][0][0],
+                                                               &h_previous_input[0][0][0],
                                                                &h_1x1_output[0][0][0],
+                                                               &h_backbone_output[0][0][0],
                                                                h_filters_1x1);
 
 
     // Check output
     if (DEBUG) {
-        convolution_cpu(h_input, h_filters_7x7, h_output_cpu);
+        convolution_cpu<floatT, Ni, NyPad, NxPad, Nn, Oy, Ox, 7>(h_input, h_filters_7x7, h_output_cpu);
         bicubic_convolution_cpu(pos_embeds, Oy, Ox, h_output_cpu_bicubic);
+        convolution_cpu<floatT, N1x1, Ny, Nx, Nn, Ny, Nx, 1>(h_input_1x1, h_filters_1x1, h_1x1_output_cpu);
+        bilinear_interpolation_2x<floatT, Nn, Ny, Nx>(h_previous_input, h_backbone_output_cpu, h_1x1_output_cpu);
         checkOutput(&h_convolution_output[0][0][0], &h_output_cpu[0][0][0], Ox * Oy * Nn);
         checkOutput(&h_output_bicubic[0][0][0], &h_output_cpu_bicubic[0][0][0], Ox * Oy * Nn);
+        checkOutput(&h_backbone_output[0][0][0], &h_backbone_output_cpu[0][0][0], Nx * Ny * Nn);
+        checkOutput(&h_1x1_output[0][0][0], &h_1x1_output_cpu[0][0][0], Nx * Ny * Nn);
     } 
 
     return 0;
