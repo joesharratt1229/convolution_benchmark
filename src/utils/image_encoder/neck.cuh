@@ -9,12 +9,13 @@
 namespace image_encoder {
 
 
+__constant__ floatT d_filters[Nn][N1x1][TileConfig<1>::KERNEL_SIZE][TileConfig<1>::KERNEL_SIZE];
+
 template<typename T, int kernel_size>
 __global__ void conv_and_bilinear_resid_kernel(T* d_backbone_input,  
                                                T* previous_input,
                                                T* lateral_feature,
                                                T* top_down_feature,
-                                               T d_filters[Nn][N1x1][kernel_size][kernel_size],
                                                dims lower_scale_dims,
                                                dims upper_scale_dims)
 {
@@ -62,7 +63,6 @@ __global__ void conv_and_bilinear_resid_kernel(T* d_backbone_input,
 }
 
 
-
 template<typename T, int kernel_size>
 void template_conv_and_bilinear_resid(T* backbone_input,  
                                       T* previous_input,
@@ -78,7 +78,6 @@ void template_conv_and_bilinear_resid(T* backbone_input,
     T* d_previous_input;
     T* d_lateral_feature;
     T* d_top_down_feature;
-    T (*d_filters)[N1x1][kernel_size][kernel_size];
 
     using Config = TileConfig<kernel_size>;
 
@@ -86,11 +85,10 @@ void template_conv_and_bilinear_resid(T* backbone_input,
     gpuErrchk(cudaMalloc((void**)&d_previous_input, upper_scale_dims.channel* lower_scale_dims.height * lower_scale_dims.width * sizeof(T)));
     gpuErrchk(cudaMalloc((void**)&d_lateral_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T)));
     gpuErrchk(cudaMalloc((void**)&d_top_down_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T)));
-    gpuErrchk(cudaMalloc((void**)&d_filters, Nn * N1x1 * kernel_size * kernel_size * sizeof(T)));
 
     cudaMemcpy(d_backbone_input, backbone_input, lower_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T), cudaMemcpyHostToDevice);
     cudaMemcpy(d_previous_input, previous_input, upper_scale_dims.channel * lower_scale_dims.height * lower_scale_dims.width * sizeof(T), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_filters, filters, Nn * N1x1 * kernel_size * kernel_size * sizeof(T), cudaMemcpyHostToDevice);
+    cudaMemcpyToSymbol(d_filters, filters, Nn * N1x1 * kernel_size * kernel_size * sizeof(T));
 
 
 
@@ -103,14 +101,16 @@ void template_conv_and_bilinear_resid(T* backbone_input,
                                                                                    d_previous_input, 
                                                                                    d_lateral_feature, 
                                                                                    d_top_down_feature, 
-                                                                                   d_filters,
                                                                                    lower_scale_dims, 
                                                                                    upper_scale_dims);
 
    gpuErrchk(cudaMemcpy(lateral_feature, d_lateral_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T), cudaMemcpyDeviceToHost));
    gpuErrchk(cudaMemcpy(top_down_feature, d_top_down_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T), cudaMemcpyDeviceToHost));
 
-
+   cudaFree(d_backbone_input);
+   cudaFree(d_previous_input);
+   cudaFree(d_lateral_feature);
+   cudaFree(d_top_down_feature);
 
 }
 
