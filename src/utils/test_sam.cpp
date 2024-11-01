@@ -2,18 +2,22 @@
 #include <vector>
 #include <algorithm>
 
-template<typename T>
+template<typename T, int Nz_input, int Ny_input, int Nx_input, int Nz_output, int Ny_output, int Nx_output, int kernel_size>
 __host__
-void convolution_cpu(T h_input[Ni][NyPad][NxPad], T h_filters[Nn][Ni][Ky][Kx], T h_output_cpu[Nn][Oy][Ox]) {
-    for (int nn = 0; nn < Nn; ++nn) {
-        for (int oy = 0; oy < Oy; ++oy) {
-            for (int ox = 0; ox < Ox; ++ox) {
+void convolution_cpu(T h_input[Nz_input][Ny_input][Nx_input], 
+                     T h_filters[Nz_output][Nz_input][kernel_size][kernel_size], 
+                     T h_output_cpu[Nz_output][Ny_output][Nx_output]) {
+    using Config = TileConfig<kernel_size>;
+
+    for (int nn = 0; nn < Nz_output; ++nn) {
+        for (int oy = 0; oy < Ny_output; ++oy) {
+            for (int ox = 0; ox < Nx_output; ++ox) {
                 T sum = 0.0f;
-                for (int ni = 0; ni < Ni; ++ni) {
-                    for (int ky = 0; ky < Ky; ++ky) {
-                        for (int kx = 0; kx < Kx; ++kx) {
-                            int iy = oy * StrideY + ky;
-                            int ix = ox * StrideX + kx;
+                for (int ni = 0; ni < Nz_input; ++ni) {
+                    for (int ky = 0; ky < kernel_size; ++ky) {
+                        for (int kx = 0; kx < kernel_size; ++kx) {
+                            int iy = oy * Config::STRIDE + ky;
+                            int ix = ox * Config::STRIDE + kx;
                             sum += h_input[ni][iy][ix] * h_filters[nn][ni][ky][kx];
                         }
                     }
@@ -23,6 +27,39 @@ void convolution_cpu(T h_input[Ni][NyPad][NxPad], T h_filters[Nn][Ni][Ky][Kx], T
         }
     }
 }
+
+
+template<typename T, int N_channels, int N_height, int N_width>
+void bilinear_interpolation_2x(T h_input[N_channels][N_height/2][N_width/2], 
+                               T h_backbone_output[N_channels][N_height][N_width], 
+                               T h_1x1_output[N_channels][N_height][N_width]) {
+    for (int nn = 0; nn < N_channels; nn++) {
+        for (int y = 0; y < N_height; y++) {
+            for (int x = 0; x < N_width; x++) {
+
+                float origx = static_cast<float>(x)/2;
+                float origy = static_cast<float>(y)/2;
+
+                int x0 = static_cast<int>(floor(origx));
+                int y0 = static_cast<int>(floor(origy));
+
+                int x1 = min(x0+1, (N_width/2)-1);
+                int y1 = min(y0+1, (N_height/2)-1);
+
+                float dx = origx - x0;
+                float dy = origy - y0;
+
+                h_backbone_output[nn][y][x] = (h_input[nn][y0][x0] * (1-dx)*(1-dy) + 
+                                     h_input[nn][y0][x1] * dx*(1-dy) + 
+                                     h_input[nn][y1][x0] * (1-dx)*dy + 
+                                     h_input[nn][y1][x1] * dx*dy);
+                
+                h_1x1_output[nn][y][x] += h_backbone_output[nn][y][x];
+            }
+        }
+    }
+}
+
 
 
 template<typename T>
@@ -37,8 +74,6 @@ void checkOutput(T *h_output, T *h_output_cpu, unsigned int total_size) {
         }
     }
 }
-
-
 
 __inline__ float cubicKernel(float x) {
     float A = -0.75;
@@ -95,43 +130,4 @@ void bicubic_convolution_cpu(T pos_embeds[Nn][POS_EMBEDS][POS_EMBEDS], const int
             }
         }
     }
-}
-
-
-static std::vector<float> upscale2x(const std::vector<float>& input,
-                                   int width,
-                                   int height,
-                                   int channels) {
-    int outWidth = width * 2;
-    int outHeight = height * 2;
-    std::vector<float> output(outWidth * outHeight * channels);
-
-    for (int y = 0; y < outHeight; ++y) {
-        for (int x = 0; x < outWidth; ++x) {
-            float srcX = x * 0.5f;
-            float srcY = y * 0.5f;
-
-            int x0 = static_cast<int>(srcX);
-            int y0 = static_cast<int>(srcY);
-            int x1 = std::min(x0 + 1, width - 1);
-            int y1 = std::min(y0 + 1, height - 1);
-
-            float wx = srcX - x0;
-            float wy = srcY - y0;
-
-            for (int c = 0; c < channels; ++c) {
-                float v00 = input[(y0 * width + x0) * channels + c];
-                float v10 = input[(y0 * width + x1) * channels + c];
-                float v01 = input[(y1 * width + x0) * channels + c];
-                float v11 = input[(y1 * width + x1) * channels + c];
-
-                output[(y * outWidth + x) * channels + c] = 
-                    v00 * (1 - wx) * (1 - wy) +
-                    v10 * wx * (1 - wy) +
-                    v01 * (1 - wx) * wy +
-                    v11 * wx * wy;
-            }
-        }
-    }
-    return output;
 }
