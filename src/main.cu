@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
     randomizePosEmbeddings<floatT, Nn, POS_EMBEDS, POS_EMBEDS>(pos_embeds);
     randomizeWindowEmbeddings(h_window_embeds);
 
-    printf("SM count: %d\n", getSMCount());
+    //printf("SM count: %d\n", getSMCount());
 
     image_encoder::template_conv_2d<floatT, 7, Ni, Nn, image_encoder::ConvImplementation::Shared>(&h_input[0][0][0], &h_convolution_output[0][0][0], h_filters_7x7);
     image_encoder::template_bicubic_upsample_and_window_embed<floatT>(&pos_embeds[0][0][0], 

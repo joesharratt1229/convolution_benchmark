@@ -136,7 +136,7 @@ void template_conv_and_bilinear_resid(T* backbone_input,
    dim3 threadsPerBlock(Config::TILE_SIZE, Config::TILE_SIZE, 1);
    dim3 blocksPerGrid((upper_scale_dims.width + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
                       (upper_scale_dims.height + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
-                      20);
+                      upper_scale_dims.channel);
 
     image_encoder::conv_2d_kernel_direct<T, kernel_size, N1x1, Nn><<<blocksPerGrid, threadsPerBlock>>>(d_backbone_input, 
                                                                                                        d_lateral_feature, 

@@ -34,7 +34,7 @@ struct KernelTraits<3> {
 
 template<>
 struct KernelTraits<1> {
-    static constexpr int TILE_SIZE = 16;
+    static constexpr int TILE_SIZE = 32;
     static constexpr int CHANNEL_TILE_SIZE = 1;
     static constexpr int STRIDE = 1;
 };
