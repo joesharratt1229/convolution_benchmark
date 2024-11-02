@@ -7,7 +7,7 @@
 
 #define EPSILON 1e-6
 #define TEMPERATURE 10000
-#define numPosFeats 128
+#define numPosFeats 16
 
 
 namespace image_encoder {       
@@ -63,8 +63,8 @@ T* template_pos_embedding(const int nx, const int ny)
     cudaMalloc((void**)&d_dimensions_x, numPosFeats*sizeof(accFloatT));
     cudaMalloc((void**)&d_dimensions_y, numPosFeats*sizeof(accFloatT));
 
-    dim3 blockSize(4*TILE_SIZE, 4*TILE_SIZE, 1);
-    dim3 gridSize((nx+4*TILE_SIZE-1)/(4*TILE_SIZE), (ny+4*TILE_SIZE-1)/(4*TILE_SIZE), numPosFeats);
+    dim3 blockSize = cuda_config::StandardConfig::block_dim();
+    dim3 gridSize((nx+blockSize.x-1)/(blockSize.x), (ny+blockSize.y-1)/(blockSize.y), numPosFeats);
 
     pos_embedding_kernel<<<gridSize, blockSize>>>(d_pos_embeds, d_dimensions_x, d_dimensions_y, nx, ny);
 

@@ -4,162 +4,158 @@
 #include <cmath>
 #include "utils/common.h"
 #include "utils/gpu_utils.cuh"
+#include "utils/conv/config.cuh"
+#include "utils/image_encoder/convolution.cuh"
 
 namespace image_encoder {
 
-__constant__ floatT d_filters[Nn][Ni][Ky][Kx];
+#define EPSILON 1e-6
+#define SCALE 2*M_PI
 
 
 template<typename T>
-__global__ void conv_and_bilinear_resid_kernel(T* d_backbone_input,  
-                                               T* previous_input,
+__device__ __forceinline__ accFloatT bilinear_interpolate(
+    const T* input,
+    int output_channel,
+    int x0, int x1,
+    int y0, int y1,
+    float dx, float dy,
+    dims lower_scale_dims) 
+{
+    const size_t base_idx = output_channel * lower_scale_dims.height * lower_scale_dims.width;
+    const size_t idx_y0 = y0 * lower_scale_dims.width;
+    const size_t idx_y1 = y1 * lower_scale_dims.width;
+    
+    return ((1-dx)*(1-dy) * static_cast<accFloatT>(input[base_idx + idx_y0 + x0]) + 
+            dx*(1-dy) * static_cast<accFloatT>(input[base_idx + idx_y0 + x1]) + 
+            (1-dx)*dy * static_cast<accFloatT>(input[base_idx + idx_y1 + x0]) + 
+            dx*dy * static_cast<accFloatT>(input[base_idx + idx_y1 + x1]));
+}
+
+template<typename T, int kernel_size>
+__global__ void conv_and_bilinear_resid_kernel(T* previous_input,
                                                T* lateral_feature,
                                                T* top_down_feature,
+                                               T* pos_embeds,
                                                dims lower_scale_dims,
-                                               dims upper_scale_dims,
-                                               int tile_size,
-                                               int input_tile_size,
-                                               int stride)
+                                               dims upper_scale_dims)
 {
-    unsigned int col = blockIdx.x * tile_size + threadIdx.x;
-    unsigned int row = blockIdx.y * tile_size + threadIdx.y;
-    unsigned int output_channel = blockIdx.z * blockDim.z + threadIdx.z;
 
-    __shared__ T input_cache[lower_scale_dims.channel * input_tile_size * input_tile_size];
+    unsigned int col = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int row = blockIdx.y * blockDim.y + threadIdx.y;
+    unsigned int output_channel = blockIdx.z;
 
-    if (threadIdx.z < lower_scale_dims.channel && stride * threadIdx.y < input_tile_size && stride * threadIdx.x < input_tile_size) {
-        if (threadIdx.y < tile_size - 1)
-            for (int y = 0; y < stride; y++)
-                if (threadIdx.x < tile_size - 1)
-                    for (int x = 0; x < stride; x++) {
-                        int index = threadIdx.z * (upper_scale_dims.height * upper_scale_dims.width) + 
-                                    (row * stride + y) * upper_scale_dims.width + 
-                                    (col * stride + x);
+    if (col <= upper_scale_dims.width && row <= upper_scale_dims.height) {
+        float origx = static_cast<float>(col)/2;
+        float origy = static_cast<float>(row)/2;
 
-                        input_cache[threadIdx.z * (input_tile_size * input_tile_size) + 
-                                    (stride * threadIdx.y + y) * input_tile_size + 
-                                    (stride * threadIdx.x + x)] =  d_backbone_input[index];
-                    }
-                else
-                    for (int x = 0; x < stride + Kx - 1; x++) {
-                        int index = threadIdx.z * (upper_scale_dims.height * upper_scale_dims.width) + 
-                                    (row * stride + y) * upper_scale_dims.width + 
-                                    (col * stride + x);
+        int x0 = static_cast<int>(floor(origx));
+        int y0 = static_cast<int>(floor(origy));
+        int x1 = min(x0+1, lower_scale_dims.width-1);
+        int y1 = min(y0+1, lower_scale_dims.height-1);
 
-                        input_cache[threadIdx.z * (input_tile_size * input_tile_size) + 
-                                    (stride * threadIdx.y + y) * input_tile_size + 
-                                    (stride * threadIdx.x + x)] = d_backbone_input[index];
-                    }
-        else 
-            for (int y = 0; y < stride + Ky - 1; y++)
-                if (threadIdx.x < tile_size - 1)
-                    for (int x = 0; x < stride; x++) {
-                        int index = threadIdx.z * (upper_scale_dims.height * upper_scale_dims.width) + 
-                                 (row * stride + y) * upper_scale_dims.width + 
-                                 (col * stride + x);
+        float dx = origx - x0;
+        float dy = origy - y0;
 
-                        input_cache[threadIdx.z * (input_tile_size * input_tile_size) + 
-                                    (stride * threadIdx.y + y) * input_tile_size + 
-                                    (stride * threadIdx.x + x)] = d_backbone_input[index];
-                    }
-                else
-                    for (int x = 0; x < stride + Kx - 1; x++) {
-                        int index = threadIdx.z * (upper_scale_dims.height * upper_scale_dims.width) +    
-                                 (row * stride + y) * upper_scale_dims.width + 
-                                 (col * stride + x);
+        accFloatT value = bilinear_interpolate(previous_input, output_channel, x0, x1, y0, y1, dx, dy, lower_scale_dims);
 
-                        input_cache[threadIdx.z * (input_tile_size * input_tile_size) + 
-                                    (stride * threadIdx.y + y) * input_tile_size + 
-                                    (stride * threadIdx.x + x)] = d_backbone_input[index];
-                    }
+        top_down_feature[output_channel*upper_scale_dims.height*upper_scale_dims.width + row*upper_scale_dims.width + col] = static_cast<T>(value);
+
+        lateral_feature[output_channel*upper_scale_dims.height*upper_scale_dims.width + row*upper_scale_dims.width + col] += static_cast<T>(value);
     }
 
-    __syncthreads();
+    accFloatT y_embed = row+1;
+    accFloatT x_embed = col+1;
 
-    T sum1 = 0.0f;
+    y_embed = y_embed/(upper_scale_dims.height + EPSILON) * SCALE;
+    x_embed = x_embed/(upper_scale_dims.width + EPSILON) * SCALE;
 
-    if (col < upper_scale_dims.width && row < upper_scale_dims.height && output_channel < upper_scale_dims.channel) {
-        #pragma unroll
-        for (int i = 0; i < lower_scale_dims.channel; i++)
-            #pragma unroll
-            for (int y = 0; y < Ky; y++)
-                #pragma unroll
-                for (int x = 0; x < Kx; x++) {
-                    T filter_val = d_filters[output_channel][i][y][x];
-                    sum1 += input_cache[i * (input_tile_size * input_tile_size) + 
-                                        (stride * threadIdx.y + y) * input_tile_size + 
-                                        (stride * threadIdx.x + x)] * filter_val;
-                }
-        
-        
-        lateral_feature[output_channel*upper_scale_dims.height*upper_scale_dims.width + row*upper_scale_dims.width + col] = sum1;
-    }
+    __shared__ accFloatT d_dimensions_x;
+    __shared__ accFloatT d_dimensions_y;
 
-    __syncthreads();
-
-
-
-    for (int y = 2*row; y < 2*row + 1; y++) {
-        for (int x = 2*col; x<2*col+1; x++) {
-            float origx = x/2;
-            float origy = y/2;
-
-            int x0 = static_cast<int>(floor(origx));
-            int y0 = static_cast<int>(floor(origy));
-            int x1 = min(x0+1, upper_scale_dims.width);
-            int y1 = min(y0+1, upper_scale_dims.height);
-
-            float dx = origx - x0;
-            float dy = origy - y0;
-
-            float value = (previous_input[output_channel*lower_scale_dims.height*lower_scale_dims.width + y0*lower_scale_dims.width + x0] * (1-dx)*(1-dy) + 
-                            previous_input[output_channel*lower_scale_dims.height*lower_scale_dims.width + y0*lower_scale_dims.width + x1] * dx*(1-dy) + 
-                            previous_input[output_channel*lower_scale_dims.height*lower_scale_dims.width + y1*lower_scale_dims.width + x0] * (1-dx)*dy + 
-                            previous_input[output_channel*lower_scale_dims.height*lower_scale_dims.width + y1*lower_scale_dims.width + x1] * dx*dy);
-
-            top_down_feature[output_channel*upper_scale_dims.height*upper_scale_dims.width + y*upper_scale_dims.width + x] = value;
-
-            lateral_feature[output_channel*upper_scale_dims.height*upper_scale_dims.width + y*upper_scale_dims.width + x] += top_down_feature[output_channel*upper_scale_dims.height*upper_scale_dims.width + y*upper_scale_dims.width + x];
+    if (col <= upper_scale_dims.width && row <= upper_scale_dims.height) {
+        if (output_channel < upper_scale_dims.channel && threadIdx.x == 0 && threadIdx.y == 0)
+        {
+            accFloatT power_term = 2*(floorf((output_channel)/2))/upper_scale_dims.channel;
+            d_dimensions_x = std::pow(TEMPERATURE, power_term);
+            d_dimensions_y = std::pow(TEMPERATURE, power_term);
         }
+
+        __syncthreads();
+
+        const bool is_even = output_channel%2 == 0;
+        const bool is_first_half = output_channel < upper_scale_dims.channel/2;
+        const accFloatT embed_val = is_first_half ? y_embed : x_embed;
+        const accFloatT dim = is_first_half ? d_dimensions_y : d_dimensions_x;
+
+        accFloatT val = is_even ? std::sin(embed_val / dim) : std::cos(embed_val / dim);
+        pos_embeds[output_channel * (upper_scale_dims.height * upper_scale_dims.width) + row * upper_scale_dims.width + col] = static_cast<T>(val);
+
     }
 }
 
-void template_conv_and_bilinear_resid(floatT* backbone_input,  
-                                      floatT* previous_input,
-                                      floatT* lateral_feature,
-                                      floatT* top_down_feature,
-                                      floatT* filters,
-                                      dims lower_scale_dims,
-                                      dims upper_scale_dims)
+
+template<typename T, int kernel_size>
+void template_conv_and_bilinear_resid(T* backbone_input,  
+                                      T* previous_input,
+                                      T* lateral_feature,
+                                      T* top_down_feature,
+                                      T filters[Nn][N1x1][kernel_size][kernel_size])
 {   
-    floatT* d_backbone_input;
-    floatT* d_previous_input;
-    floatT* d_lateral_feature;
-    floatT* d_top_down_feature;
 
-    gpuErrchk(cudaMalloc((void**)&d_backbone_input, lower_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(floatT)));
-    gpuErrchk(cudaMalloc((void**)&d_previous_input, upper_scale_dims.channel* lower_scale_dims.height * lower_scale_dims.width * sizeof(floatT)));
-    gpuErrchk(cudaMalloc((void**)&d_lateral_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(floatT)));
-    gpuErrchk(cudaMalloc((void**)&d_top_down_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(floatT)));
+    dims lower_scale_dims = {Nx/2, Ny/2, N1x1};
+    dims upper_scale_dims = {Nx, Ny, Nn};
 
+    T* h_pos_embeds;
 
-    cudaMemcpy(d_backbone_input, backbone_input, lower_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(floatT), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_previous_input, previous_input, upper_scale_dims.channel * lower_scale_dims.height * lower_scale_dims.width * sizeof(floatT), cudaMemcpyHostToDevice);
-    cudaMemcpyToSymbol(d_filters, filters, Nn * Ni * Ky * Kx * sizeof(floatT), 0, cudaMemcpyHostToDevice);
+    gpuErrchk(cudaMallocHost((void**)&h_pos_embeds, numPosFeats*upper_scale_dims.height*upper_scale_dims.width*sizeof(T)));
 
-    int tile_size = 32;
-    int input_tile_size = 2*tile_size + Ky - 1;
-    int stride = 1;
+    T* d_backbone_input, *d_previous_input, *d_lateral_feature, *d_top_down_feature, *d_pos_embeds; 
+    T (*d_filters)[N1x1][kernel_size][kernel_size];
 
-   dim3 threadsPerBlock(tile_size, tile_size, 1);
-   dim3 blocksPerGrid((upper_scale_dims.width + tile_size - 1) / tile_size, (upper_scale_dims.height + tile_size - 1) / tile_size, upper_scale_dims.channel);
+    using Config = TileConfig<kernel_size>;
 
-   conv_and_bilinear_resid_kernel<floatT><<<<blocksPerGrid, threadsPerBlock>>>(d_backbone_input, d_previous_input, d_lateral_feature, d_top_down_feature, lower_scale_dims, upper_scale_dims, tile_size, input_tile_size, stride);
+    gpuErrchk(cudaMalloc((void**)&d_backbone_input, lower_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T)));
+    gpuErrchk(cudaMalloc((void**)&d_previous_input, upper_scale_dims.channel* lower_scale_dims.height * lower_scale_dims.width * sizeof(T)));
+    gpuErrchk(cudaMalloc((void**)&d_lateral_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T)));
+    gpuErrchk(cudaMalloc((void**)&d_top_down_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T)));
 
-   gpuErrchk(cudaMemcpy(lateral_feature, d_lateral_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(floatT), cudaMemcpyDeviceToHost));
-   gpuErrchk(cudaMemcpy(top_down_feature, d_top_down_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(floatT), cudaMemcpyDeviceToHost));
+    gpuErrchk(cudaMalloc((void**)&d_pos_embeds, numPosFeats*upper_scale_dims.height*upper_scale_dims.width*sizeof(T)));
+    gpuErrchk(cudaMalloc((void**)&d_filters, Nn * N1x1 * kernel_size * kernel_size * sizeof(T)));
 
+    gpuErrchk(cudaMemcpy(d_backbone_input, backbone_input, lower_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T), cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(d_previous_input, previous_input, upper_scale_dims.channel * lower_scale_dims.height * lower_scale_dims.width * sizeof(T), cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(d_filters, filters, Nn * N1x1 * kernel_size * kernel_size * sizeof(T), cudaMemcpyHostToDevice));
 
+    gpuErrchk(cudaMemset(d_pos_embeds, 0, numPosFeats*upper_scale_dims.height*upper_scale_dims.width*sizeof(T)));
+
+   dim3 threadsPerBlock(Config::TILE_SIZE, Config::TILE_SIZE, 1);
+   dim3 blocksPerGrid((upper_scale_dims.width + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
+                      (upper_scale_dims.height + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
+                      upper_scale_dims.channel);
+
+    image_encoder::conv_2d_kernel_direct<T, kernel_size, N1x1, Nn><<<blocksPerGrid, threadsPerBlock>>>(d_backbone_input, 
+                                                                                                       d_lateral_feature, 
+                                                                                                       d_filters, 
+                                                                                                       lower_scale_dims, 
+                                                                                                       upper_scale_dims);
+
+   conv_and_bilinear_resid_kernel<T, kernel_size><<<blocksPerGrid, threadsPerBlock>>>(d_previous_input, 
+                                                                                      d_lateral_feature, 
+                                                                                      d_top_down_feature, 
+                                                                                      d_pos_embeds,
+                                                                                      lower_scale_dims, 
+                                                                                      upper_scale_dims);
+
+   gpuErrchk(cudaMemcpy(lateral_feature, d_lateral_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T), cudaMemcpyDeviceToHost));
+   gpuErrchk(cudaMemcpy(top_down_feature, d_top_down_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T), cudaMemcpyDeviceToHost));
+   gpuErrchk(cudaMemcpy(h_pos_embeds, d_pos_embeds, numPosFeats*upper_scale_dims.height*upper_scale_dims.width*sizeof(T), cudaMemcpyDeviceToHost));
+
+   cudaFree(d_backbone_input);
+   cudaFree(d_previous_input);
+   cudaFree(d_lateral_feature);
+   cudaFree(d_top_down_feature);
+   cudaFree(d_pos_embeds);
 
 }
 

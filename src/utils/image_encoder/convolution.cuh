@@ -3,39 +3,64 @@
 
 #include "cuda_runtime.h"
 
+#include "utils/conv/config.cuh"
 #include "utils/common.h"
 #include "utils/gpu_utils.cuh"
 
-namespace image_encoder {   
+namespace image_encoder {
 
-template<typename T>
-__global__ void conv_2d_kernel(T d_input[Ni][NyPad][NxPad], 
-                               T d_filters[Nn][Ni][Ky][Kx], 
-                               T d_output[Nn][Oy][Ox])
+enum class ConvImplementation {
+    Shared,
+    Direct    
+};
+
+template<typename T, int kernel_size, int in_channel_size, int out_channel_size>
+__global__ void conv_2d_kernel_shared(T* d_input, 
+                               T* d_output,
+                               T d_filters[out_channel_size][in_channel_size][kernel_size][kernel_size],
+                               dims input_dims,
+                               dims output_dims)
 {
-    unsigned int col = 2*(blockIdx.x * TILE_SIZE + threadIdx.x);
-    unsigned int row = blockIdx.y * TILE_SIZE + threadIdx.y;
+    using Config = TileConfig<kernel_size>;
+
+    unsigned int col = 2*(blockIdx.x * blockDim.x + threadIdx.x);
+    unsigned int row = blockIdx.y * blockDim.y + threadIdx.y;
     unsigned int output_channel = blockIdx.z * blockDim.z + threadIdx.z;
+    __shared__ T input_cache[in_channel_size][Config::INPUT_TILE_SIZE][Config::INPUT_TILE_SIZE*2];
 
-    __shared__ T input_cache[Ni][INPUT_TILE_Y][INPUT_TILE_X*2];
-
-    if (threadIdx.z < Ni && StrideY * threadIdx.y < INPUT_TILE_Y && StrideX * threadIdx.x < INPUT_TILE_X) {
-        if (threadIdx.y < TILE_SIZE - 1)
-            for (int y = 0; y < StrideY; y++)
-                if (threadIdx.x < TILE_SIZE - 1)
-                    for (int x = 0; x < 2* StrideX; x++) 
-                        input_cache[threadIdx.z][StrideY * threadIdx.y + y][2*StrideX * threadIdx.x + x] = d_input[threadIdx.z][row*StrideY + y][col*StrideX + x];
+    if (threadIdx.z < in_channel_size && Config::STRIDE * threadIdx.y < Config::INPUT_TILE_SIZE && Config::STRIDE * threadIdx.x < Config::INPUT_TILE_SIZE) {
+        if (threadIdx.y < blockDim.y - 1)
+            for (int y = 0; y < Config::STRIDE; y++)
+                if (threadIdx.x < blockDim.x - 1)
+                    for (int x = 0; x < 2* Config::STRIDE; x++) {
+                        int index = threadIdx.z * (input_dims.height * input_dims.width) + 
+                                (row * Config::STRIDE + y) * input_dims.width + 
+                                (col * Config::STRIDE + x);
+                        input_cache[threadIdx.z][Config::STRIDE * threadIdx.y + y][2*Config::STRIDE * threadIdx.x + x] = d_input[index];
+                    }
                 else
-                    for (int x = 0; x < 2* StrideX + Kx - 1; x++) 
-                        input_cache[threadIdx.z][StrideY * threadIdx.y + y][2*StrideX * threadIdx.x + x] = d_input[threadIdx.z][row*StrideY + y][col*StrideX + x];
+                    for (int x = 0; x < 2* Config::STRIDE + Config::KERNEL_SIZE - 1; x++) {
+                        int index = threadIdx.z * (input_dims.height * input_dims.width) + 
+                                (row * Config::STRIDE + y) * input_dims.width + 
+                                (col * Config::STRIDE + x);
+                        input_cache[threadIdx.z][Config::STRIDE * threadIdx.y + y][2*Config::STRIDE * threadIdx.x + x] = d_input[index];
+                    }
         else 
-            for (int y = 0; y < StrideY + Ky - 1; y++)
-                if (threadIdx.x < TILE_SIZE - 1)
-                    for (int x = 0; x < 2* StrideX; x++) 
-                        input_cache[threadIdx.z][StrideY * threadIdx.y + y][2*StrideX * threadIdx.x + x] = d_input[threadIdx.z][row*StrideY + y][col*StrideX + x];
+            for (int y = 0; y < Config::STRIDE + Config::KERNEL_SIZE - 1; y++)
+                if (threadIdx.x < Config::TILE_SIZE - 1)
+                    for (int x = 0; x < 2* Config::STRIDE; x++) {
+                        int index = threadIdx.z * (input_dims.height * input_dims.width) + 
+                                (row * Config::STRIDE + y) * input_dims.width + 
+                                (col * Config::STRIDE + x);
+                        input_cache[threadIdx.z][Config::STRIDE * threadIdx.y + y][2*Config::STRIDE * threadIdx.x + x] = d_input[index];
+                    }
                 else
-                    for (int x = 0; x < 2* StrideX + Kx - 1; x++) 
-                        input_cache[threadIdx.z][StrideY * threadIdx.y + y][2*StrideX * threadIdx.x + x] = d_input[threadIdx.z][row*StrideY + y][col*StrideX + x];
+                    for (int x = 0; x < 2* Config::STRIDE + Config::KERNEL_SIZE - 1; x++) {
+                        int index = threadIdx.z * (input_dims.height * input_dims.width) + 
+                                (row * Config::STRIDE + y) * input_dims.width + 
+                                (col * Config::STRIDE + x);
+                        input_cache[threadIdx.z][Config::STRIDE * threadIdx.y + y][2*Config::STRIDE * threadIdx.x + x] = d_input[index];
+                    }
     }
     
     __syncthreads();
@@ -43,69 +68,106 @@ __global__ void conv_2d_kernel(T d_input[Ni][NyPad][NxPad],
     T sum1 = 0.0f;
     T sum2 = 0.0f;
 
-    if (row < Oy && output_channel < Nn) {
+    if (row < output_dims.height && output_channel < out_channel_size) {
         #pragma unroll
-        for (int i = 0; i < Ni; i++)
+        for (int i = 0; i < in_channel_size; i++)
             #pragma unroll
-            for (int y = 0; y < Ky; y++)
+            for (int y = 0; y < Config::KERNEL_SIZE; y++)
                 #pragma unroll
-                for (int x = 0; x < Kx; x++) {
+                for (int x = 0; x < Config::KERNEL_SIZE; x++) {
                     T filter_val = d_filters[output_channel][i][y][x];
-                    sum1 += input_cache[i][threadIdx.y * StrideY + y][(2*threadIdx.x) * StrideX + x] * filter_val;
-                    sum2 += input_cache[i][threadIdx.y * StrideY + y][(2*threadIdx.x+1) * StrideX + x] * filter_val;
+                    sum1 += input_cache[i][threadIdx.y * Config::STRIDE + y][(2*threadIdx.x) * Config::STRIDE + x] * filter_val;
+                    sum2 += input_cache[i][threadIdx.y * Config::STRIDE + y][(2*threadIdx.x+1) * Config::STRIDE + x] * filter_val;
 
                 }
         
         if (col < Ox) {
-            d_output[output_channel][row][col] = sum1;
+            d_output[output_channel * output_dims.height * output_dims.width + row * output_dims.width + col] = sum1;
         }
         if (col+1 < Ox) {
-            d_output[output_channel][row][col+1] = sum2;
+            d_output[output_channel * output_dims.height * output_dims.width + row * output_dims.width + col + 1] = sum2;
         }
     }
 }
 
 
-
-template<typename T, int channel_size>
-__host__ void template_conv_2d(T h_input[Ni][NyPad][NxPad], 
-                               T h_filters[Nn][Ni][Ky][Kx], 
-                               T h_output[Nn][Oy][Ox])
+template<typename T, int kernel_size, int in_channel_size, int out_channel_size>
+__global__ void conv_2d_kernel_direct(T* d_input, 
+                                     T* d_output,
+                                     T d_filters[out_channel_size][in_channel_size][kernel_size][kernel_size],
+                                     dims input_dims,
+                                     dims output_dims)
 {
+    using Config = TileConfig<kernel_size>;
+
+    unsigned int col = blockIdx.x * Config::TILE_SIZE + threadIdx.x;
+    unsigned int row = blockIdx.y * Config::TILE_SIZE + threadIdx.y;
+    unsigned int output_channel = blockIdx.z;
+
+    T sum = 0.0f;
+
+    if (col <= output_dims.width && row <= output_dims.height && output_channel <= out_channel_size) {
+        #pragma unroll
+        for (int i = 0; i < in_channel_size; i++){
+            #pragma unroll
+            for (int y = 0; y < kernel_size; y++)
+                #pragma unroll
+                for (int x = 0; x < kernel_size; x++) {
+                    T filter_val = d_filters[output_channel][i][y][x];
+                    sum += d_input[i * (output_dims.width * output_dims.height) + (row + y) * output_dims.width + (col + x)] * filter_val;
+                }
+        }
+        
+        d_output[output_channel*output_dims.height*output_dims.width + row*output_dims.width + col] = sum;
+    } 
+
+}
+
+
+template<typename T, int kernel_size, int in_channel_size, int out_channel_size, ConvImplementation implementation>
+__host__ void template_conv_2d(T* h_input, 
+                               T* h_output,
+                               T h_filters[out_channel_size][in_channel_size][kernel_size][kernel_size])
+{
+    using Config = TileConfig<kernel_size>;
     unsigned int Ox2 = (Ox + 1) / 2;
 
-    dim3 threadsPerBlock(TILE_SIZE, TILE_SIZE, channel_size);
+    dim3 threadsPerBlock(Config::TILE_SIZE, Config::TILE_SIZE, Config::CHANNEL_TILE_SIZE);
     dim3 blocksPerGrid((Ox2 + threadsPerBlock.x - 1) / threadsPerBlock.x,
                        (Oy + threadsPerBlock.y - 1) / threadsPerBlock.y,
                        (Nn + threadsPerBlock.z - 1) / threadsPerBlock.z);
 
-    T (*d_input)[NyPad][NxPad];
-    T (*d_output)[Oy][Ox];
-    T (*d_filters)[Ni][Ky][Kx];
+    T* d_input;
+    T* d_output;
+    T (*d_filters)[in_channel_size][kernel_size][kernel_size];
+
+    dims input_dims = {NxPad, NyPad, in_channel_size};
+    dims output_dims = {Ox, Oy, out_channel_size};
+
+    cudaMalloc((void**)&d_input, input_dims.width * input_dims.height * input_dims.channel * sizeof(T));
+    cudaMalloc((void**)&d_output, output_dims.width * output_dims.height * output_dims.channel * sizeof(T));
+    cudaMalloc((void**)&d_filters, out_channel_size * in_channel_size * kernel_size * kernel_size * sizeof(T));
+
+    gpuErrchk(cudaMemcpy(d_input, h_input, input_dims.width * input_dims.height * input_dims.channel * sizeof(T), cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(d_filters, h_filters, out_channel_size * in_channel_size * kernel_size * kernel_size * sizeof(T), cudaMemcpyHostToDevice));
 
 
-    cudaMalloc((void**)&d_input, I_MEM_SIZE);
-    cudaMalloc((void**)&d_output, O_MEM_SIZE);
-    cudaMalloc((void**)&d_filters, F_MEM_SIZE);
-
-    // Copy filters and input : host -> device
-    gpuErrchk(cudaMemcpy(d_input, h_input, I_MEM_SIZE, cudaMemcpyHostToDevice));
-    gpuErrchk(cudaMemcpy(d_filters, h_filters, F_MEM_SIZE, cudaMemcpyHostToDevice));
-    //gpuErrchk(cudaMemcpy(d_pos_embeds, pos_embeds, PE_MEM_SIZE, cudaMemcpyHostToDevice));
-
-
-    // Start timer and execute kernel
     cudaStream_t stream;
     cudaStreamCreate(&stream);
 
-
-    conv_2d_kernel<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_input, d_filters, d_output);
+    if (implementation == ConvImplementation::Shared)
+        conv_2d_kernel_shared<T, kernel_size, in_channel_size, out_channel_size><<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_input, d_output, d_filters, input_dims, output_dims);
+    else
+        conv_2d_kernel_direct<T, kernel_size, in_channel_size, out_channel_size><<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_input, d_output, d_filters, input_dims, output_dims);
+    
+    
     gpuErrchk(cudaDeviceSynchronize());
-
-    // Copy output : device -> host
-    gpuErrchk(cudaMemcpy(h_output, d_output, O_MEM_SIZE, cudaMemcpyDeviceToHost));
+    gpuErrchk(cudaMemcpy(h_output, d_output, output_dims.width * output_dims.height * output_dims.channel * sizeof(T), cudaMemcpyDeviceToHost));
 }
 
+
 }
+
+
 
 #endif

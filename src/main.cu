@@ -11,11 +11,11 @@
 using namespace std;
 
 
-template<typename T>
-__host__ void randomizeFilters(T h_filters[Nn][Ni][Ky][Kx]);
+template<typename T, int NnDim, int NiDim, int KyDim, int KxDim>
+__host__ void randomizeFilters(T h_filters[NnDim][NiDim][KyDim][KxDim]);
 
-template<typename T>
-__host__ void randomizeInput(T h_input[Ni][NyPad][NxPad]);
+template<typename T, int NiDim, int NyDim, int NxDim>
+__host__ void randomizeInput(T h_input[NiDim][NyDim][NxDim]);
 
 template<typename T>
 __host__ void padInput(T h_input[Ni][NyPad][NxPad]);
@@ -25,9 +25,9 @@ __host__ void printParameters();
 
 template<typename T>
 __host__ void randomizeWindowEmbeddings(T h_window_embeds[Nn][WINDOW_EMBEDS][WINDOW_EMBEDS]);
-template<typename T>
-__host__
-void randomizePosEmbeddings(T h_pos_embeds[Nn][POS_EMBEDS][POS_EMBEDS]);
+
+template<typename T, int NnDim, int x_dim, int y_dim>
+void randomizePosEmbeddings(T h_pos_embeds[NnDim][x_dim][y_dim]);
 
 
 int main(int argc, char **argv) {
@@ -35,40 +35,59 @@ int main(int argc, char **argv) {
 
 
     static floatT h_input[Ni][NyPad][NxPad];
+    static floatT h_input_1x1[N1x1][Ny][Nx];
+    static floatT h_previous_input[Nn][Ny/2][Nx/2];
+
     static floatT h_convolution_output[Nn][Oy][Ox];
-    static floatT h_output_bicubic[Nn][Oy][Ox];
     static floatT h_output_cpu[Nn][Oy][Ox];
+    static floatT h_output_bicubic[Nn][Oy][Ox];
     static floatT h_output_cpu_bicubic[Nn][Oy][Ox];
-    static floatT h_filters[Nn][Ni][Ky][Kx]; 
+
+    static floatT h_filters_7x7[Nn][Ni][Ky][Kx]; 
+
+    static floatT h_1x1_output[Nn][Ny][Nx];
+    static floatT h_1x1_output_cpu[Nn][Ny][Nx];
+    static floatT h_backbone_output[Nn][Ny][Nx];
+    static floatT h_backbone_output_cpu[Nn][Ny][Nx];
+    static floatT h_filters_1x1[Nn][N1x1][1][1];
+
     static floatT pos_embeds[Nn][POS_EMBEDS][POS_EMBEDS];
     static floatT h_window_embeds[Nn][WINDOW_EMBEDS][WINDOW_EMBEDS];
 
-    dims input_dims = {32, 32, 16};
-    dims output_dims = {64, 64, 8};
-    randomizeFilters(h_filters);            
-    randomizeInput(h_input);
+
+    randomizeFilters<floatT, Nn, Ni, Ky, Kx>(h_filters_7x7);  
+    randomizeFilters<floatT, Nn, N1x1, 1, 1>(h_filters_1x1);
+    randomizeInput<floatT, Ni, NyPad, NxPad>(h_input);
+    randomizeInput<floatT, N1x1, Ny, Nx>(h_input_1x1);
     padInput(h_input);
-    randomizePosEmbeddings(pos_embeds);
+    randomizePosEmbeddings<floatT, Nn, POS_EMBEDS, POS_EMBEDS>(pos_embeds);
     randomizeWindowEmbeddings(h_window_embeds);
-    //image_encoder::template_conv_2d<floatT, 16>(h_input, h_filters, h_convolution_output);
-    /*image_encoder::template_bicubic_upsample_and_window_embed<floatT, POS_EMBEDS, Nn, Oy, Ox, 16, WINDOW_EMBEDS>(pos_embeds, 
-                                                                                                 h_output_bicubic, 
-                                                                                                 h_convolution_output,
-                                                                                                 h_window_embeds, 
-                                                                                                 input_dims, 
-                                                                                                 output_dims);*/
+
+
+    image_encoder::template_conv_2d<floatT, 7, Ni, Nn, image_encoder::ConvImplementation::Shared>(&h_input[0][0][0], &h_convolution_output[0][0][0], h_filters_7x7);
+    image_encoder::template_bicubic_upsample_and_window_embed<floatT>(&pos_embeds[0][0][0], 
+                                                                     &h_output_bicubic[0][0][0], 
+                                                                     &h_convolution_output[0][0][0],
+                                                                     &h_window_embeds[0][0][0]);
     
 
-    //floatT* h_pos_embeds = image_encoder::template_pos_embedding<floatT, accFloatT>(Nx, Ny);
-    image_encoder::template_conv_and_bilinear_resid(h_input, h_filters, h_output_cpu, h_output_cpu_bicubic, pos_embeds, h_window_embeds, input_dims, output_dims);
-                                                                                            
+    image_encoder::template_conv_and_bilinear_resid<floatT, 1>(&h_input_1x1[0][0][0],
+                                                               &h_previous_input[0][0][0],
+                                                               &h_1x1_output[0][0][0],
+                                                               &h_backbone_output[0][0][0],
+                                                               h_filters_1x1);
+
 
     // Check output
     if (DEBUG) {
-        convolution_cpu(h_input, h_filters, h_output_cpu);
-        bicubic_convolution_cpu(pos_embeds, Oy, Ox, h_output_cpu_bicubic);
+        convolution_cpu<floatT, Ni, NyPad, NxPad, Nn, Oy, Ox, 7>(h_input, h_filters_7x7, h_output_cpu);
+        bicubic_convolution_cpu<floatT, Nn, POS_EMBEDS, POS_EMBEDS, Oy, Ox>(pos_embeds, Oy, Ox, h_output_cpu_bicubic);
+        convolution_cpu<floatT, N1x1, Ny, Nx, Nn, Ny, Nx, 1>(h_input_1x1, h_filters_1x1, h_1x1_output_cpu);
+        bilinear_interpolation_2x<floatT, Nn, Ny, Nx>(h_previous_input, h_backbone_output_cpu, h_1x1_output_cpu);
         checkOutput(&h_convolution_output[0][0][0], &h_output_cpu[0][0][0], Ox * Oy * Nn);
         checkOutput(&h_output_bicubic[0][0][0], &h_output_cpu_bicubic[0][0][0], Ox * Oy * Nn);
+        checkOutput(&h_backbone_output[0][0][0], &h_backbone_output_cpu[0][0][0], Nx * Ny * Nn);
+        checkOutput(&h_1x1_output[0][0][0], &h_1x1_output_cpu[0][0][0], Nx * Ny * Nn);
     } 
 
     return 0;
@@ -83,19 +102,19 @@ __host__ void randomizeWindowEmbeddings(T h_window_embeds[Nn][WINDOW_EMBEDS][WIN
 }
 
 
-template<typename T>
+template<typename T, int Num_channels, int x_dim, int y_dim>
 __host__
-void randomizePosEmbeddings(T h_pos_embeds[Nn][POS_EMBEDS][POS_EMBEDS]) {
-    for (int nn = 0; nn < Nn; ++nn)
-        for (int yy = 0; yy < POS_EMBEDS; ++yy)
-            for (int xx = 0; xx < POS_EMBEDS; ++xx)
+void randomizePosEmbeddings(T h_pos_embeds[Num_channels][x_dim][y_dim]) {
+    for (int nn = 0; nn < Num_channels; ++nn)
+        for (int yy = 0; yy < y_dim; ++yy)
+            for (int xx = 0; xx < x_dim; ++xx)
                 h_pos_embeds[nn][yy][xx] = static_cast<T>(static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f);
 }
 
 
-template<typename T>
+template<typename T, int NnDim, int NiDim, int KyDim, int KxDim>
 __host__
-void randomizeFilters(T h_filters[Nn][Ni][Ky][Kx]) {
+void randomizeFilters(T h_filters[NnDim][NiDim][KyDim][KxDim]) {
     for (int yy = 0; yy < Ky; ++yy)
         for (int xx = 0; xx < Kx; ++xx)
             for (int nn = 0; nn < Nn; ++nn)
@@ -103,12 +122,12 @@ void randomizeFilters(T h_filters[Nn][Ni][Ky][Kx]) {
                     h_filters[nn][ni][yy][xx] = static_cast<T>(static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f);
 }
 
-template<typename T>
+template<typename T, int NiDim, int NyDim, int NxDim>
 __host__
-void randomizeInput(T h_input[Ni][NyPad][NxPad]) {
-    for (int ni = 0; ni < Ni; ++ni)
-        for (int yy = 0; yy < NyPad; ++yy)
-            for (int xx = 0; xx < NxPad; ++xx)
+void randomizeInput(T h_input[NiDim][NyDim][NxDim]) {
+    for (int ni = 0; ni < NiDim; ++ni)
+        for (int yy = 0; yy < NyDim; ++yy)
+            for (int xx = 0; xx < NxDim; ++xx)
                 h_input[ni][yy][xx] = static_cast<T>(static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f);
 }
 
