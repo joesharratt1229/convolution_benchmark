@@ -7,7 +7,7 @@
 
 #define EPSILON 1e-6
 #define TEMPERATURE 10000
-#define numPosFeats 128
+#define numPosFeats 8
 
 
 namespace image_encoder {       
