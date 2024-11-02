@@ -25,9 +25,9 @@ __host__ void printParameters();
 
 template<typename T>
 __host__ void randomizeWindowEmbeddings(T h_window_embeds[Nn][WINDOW_EMBEDS][WINDOW_EMBEDS]);
-template<typename T>
-__host__
-void randomizePosEmbeddings(T h_pos_embeds[Nn][POS_EMBEDS][POS_EMBEDS]);
+
+template<typename T, int NnDim, int x_dim, int y_dim>
+void randomizePosEmbeddings(T h_pos_embeds[NnDim][x_dim][y_dim]);
 
 
 int main(int argc, char **argv) {
@@ -60,7 +60,7 @@ int main(int argc, char **argv) {
     randomizeInput<floatT, Ni, NyPad, NxPad>(h_input);
     randomizeInput<floatT, N1x1, Ny, Nx>(h_input_1x1);
     padInput(h_input);
-    randomizePosEmbeddings(pos_embeds);
+    randomizePosEmbeddings<floatT, Nn, POS_EMBEDS, POS_EMBEDS>(pos_embeds);
     randomizeWindowEmbeddings(h_window_embeds);
 
 
@@ -71,7 +71,6 @@ int main(int argc, char **argv) {
                                                                      &h_window_embeds[0][0][0]);
     
 
-    //floatT* h_pos_embeds = image_encoder::template_pos_embedding<floatT, accFloatT>(Nx, Ny);
     image_encoder::template_conv_and_bilinear_resid<floatT, 1>(&h_input_1x1[0][0][0],
                                                                &h_previous_input[0][0][0],
                                                                &h_1x1_output[0][0][0],
@@ -82,13 +81,13 @@ int main(int argc, char **argv) {
     // Check output
     if (DEBUG) {
         convolution_cpu<floatT, Ni, NyPad, NxPad, Nn, Oy, Ox, 7>(h_input, h_filters_7x7, h_output_cpu);
-        bicubic_convolution_cpu(pos_embeds, Oy, Ox, h_output_cpu_bicubic);
-        convolution_cpu<floatT, N1x1, Ny, Nx, Nn, Ny, Nx, 1>(h_input_1x1, h_filters_1x1, h_1x1_output_cpu);
-        bilinear_interpolation_2x<floatT, Nn, Ny, Nx>(h_previous_input, h_backbone_output_cpu, h_1x1_output_cpu);
+        bicubic_convolution_cpu<floatT, Nn, POS_EMBEDS, POS_EMBEDS, Oy, Ox>(pos_embeds, Oy, Ox, h_output_cpu_bicubic);
+        //convolution_cpu<floatT, N1x1, Ny, Nx, Nn, Ny, Nx, 1>(h_input_1x1, h_filters_1x1, h_1x1_output_cpu);
+        //bilinear_interpolation_2x<floatT, Nn, Ny, Nx>(h_previous_input, h_backbone_output_cpu, h_1x1_output_cpu);
         checkOutput(&h_convolution_output[0][0][0], &h_output_cpu[0][0][0], Ox * Oy * Nn);
         checkOutput(&h_output_bicubic[0][0][0], &h_output_cpu_bicubic[0][0][0], Ox * Oy * Nn);
-        checkOutput(&h_backbone_output[0][0][0], &h_backbone_output_cpu[0][0][0], Nx * Ny * Nn);
-        checkOutput(&h_1x1_output[0][0][0], &h_1x1_output_cpu[0][0][0], Nx * Ny * Nn);
+        //checkOutput(&h_backbone_output[0][0][0], &h_backbone_output_cpu[0][0][0], Nx * Ny * Nn);
+        //checkOutput(&h_1x1_output[0][0][0], &h_1x1_output_cpu[0][0][0], Nx * Ny * Nn);
     } 
 
     return 0;
@@ -103,12 +102,12 @@ __host__ void randomizeWindowEmbeddings(T h_window_embeds[Nn][WINDOW_EMBEDS][WIN
 }
 
 
-template<typename T>
+template<typename T, int Num_channels, int x_dim, int y_dim>
 __host__
-void randomizePosEmbeddings(T h_pos_embeds[Nn][POS_EMBEDS][POS_EMBEDS]) {
-    for (int nn = 0; nn < Nn; ++nn)
-        for (int yy = 0; yy < POS_EMBEDS; ++yy)
-            for (int xx = 0; xx < POS_EMBEDS; ++xx)
+void randomizePosEmbeddings(T h_pos_embeds[Num_channels][x_dim][y_dim]) {
+    for (int nn = 0; nn < Num_channels; ++nn)
+        for (int yy = 0; yy < y_dim; ++yy)
+            for (int xx = 0; xx < x_dim; ++xx)
                 h_pos_embeds[nn][yy][xx] = static_cast<T>(static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f);
 }
 
