@@ -9,6 +9,9 @@
 
 namespace image_encoder {
 
+#define EPSILON 1e-6
+#define SCALE 2*M_PI
+
 template<typename T, int kernel_size>
 __global__ void conv_and_bilinear_resid_kernel(T* previous_input,
                                                T* lateral_feature,
@@ -24,7 +27,7 @@ __global__ void conv_and_bilinear_resid_kernel(T* previous_input,
     unsigned int row = blockIdx.y * blockDim.y + threadIdx.y;
     unsigned int output_channel = blockIdx.z;
 
-    if (col <= upper_scale_dims.width && row <= upper_scale_dims.height && output_channel <= upper_scale_dims.channel) {
+    if (col <= upper_scale_dims.width && row <= upper_scale_dims.height) {
         float origx = static_cast<float>(col)/2;
         float origy = static_cast<float>(row)/2;
 
@@ -49,26 +52,27 @@ __global__ void conv_and_bilinear_resid_kernel(T* previous_input,
     accFloatT y_embed = row+1;
     accFloatT x_embed = col+1;
 
+    y_embed = y_embed/(upper_scale_dims.height + EPSILON) * SCALE;
+    x_embed = x_embed/(upper_scale_dims.width + EPSILON) * SCALE;
+
     if (col <= upper_scale_dims.width && row <= upper_scale_dims.height) {
-        if (output_channel < numPosFeats && col == 0 && row == 0)
+        if (output_channel < upper_scale_dims.channel && threadIdx.x == 0 && threadIdx.y == 0)
         {
-            accFloatT power_term = 2*(floorf((output_channel)/2))/numPosFeats;
+            accFloatT power_term = 2*(floorf((output_channel)/2))/upper_scale_dims.channel;
             d_dimensions_x[output_channel] = std::pow(TEMPERATURE, power_term);
             d_dimensions_y[output_channel] = std::pow(TEMPERATURE, power_term);
         }
 
         __syncthreads();
 
-        if (output_channel < numPosFeats)
-        {
-            const bool is_even = output_channel%2 == 0;
-            const bool is_first_half = output_channel < numPosFeats/2;
-            const accFloatT embed_val = is_first_half ? y_embed : x_embed;
-            const accFloatT dim = is_first_half ? d_dimensions_y[output_channel] : d_dimensions_x[output_channel];
+        const bool is_even = output_channel%2 == 0;
+        const bool is_first_half = output_channel < upper_scale_dims.channel/2;
+        const accFloatT embed_val = is_first_half ? y_embed : x_embed;
+        const accFloatT dim = is_first_half ? d_dimensions_y[output_channel] : d_dimensions_x[output_channel];
 
-            accFloatT val = is_even ? std::sin(embed_val / dim) : std::cos(embed_val / dim);
-            pos_embeds[output_channel * (upper_scale_dims.height * upper_scale_dims.width) + row * upper_scale_dims.width + col] = static_cast<T>(val);
-        }
+        accFloatT val = is_even ? std::sin(embed_val / dim) : std::cos(embed_val / dim);
+        pos_embeds[output_channel * (upper_scale_dims.height * upper_scale_dims.width) + row * upper_scale_dims.width + col] = static_cast<T>(val);
+
     }
 }
 
@@ -125,7 +129,6 @@ void template_conv_and_bilinear_resid(T* backbone_input,
                                                                                                        lower_scale_dims, 
                                                                                                        upper_scale_dims);
 
-
    conv_and_bilinear_resid_kernel<T, kernel_size><<<blocksPerGrid, threadsPerBlock>>>(d_previous_input, 
                                                                                       d_lateral_feature, 
                                                                                       d_top_down_feature, 
@@ -138,6 +141,12 @@ void template_conv_and_bilinear_resid(T* backbone_input,
    gpuErrchk(cudaMemcpy(lateral_feature, d_lateral_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T), cudaMemcpyDeviceToHost));
    gpuErrchk(cudaMemcpy(top_down_feature, d_top_down_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T), cudaMemcpyDeviceToHost));
    gpuErrchk(cudaMemcpy(h_pos_embeds, d_pos_embeds, numPosFeats*upper_scale_dims.height*upper_scale_dims.width*sizeof(T), cudaMemcpyDeviceToHost));
+
+   FILE* f = fopen("pos_embeds.txt", "w");
+   for (int i = 0; i < numPosFeats*upper_scale_dims.height*upper_scale_dims.width; i++) {
+       fprintf(f, "%f\n", static_cast<float>(h_pos_embeds[i]));
+   }
+   fclose(f);
 
    cudaFree(d_backbone_input);
    cudaFree(d_previous_input);
