@@ -37,8 +37,8 @@ void bilinear_interpolation_2x(T h_input[N_channels][N_height/2][N_width/2],
         for (int y = 0; y < N_height; y++) {
             for (int x = 0; x < N_width; x++) {
 
-                float origx = static_cast<float>(x)/2;
-                float origy = static_cast<float>(y)/2;
+                accFloatT origx = static_cast<accFloatT>(x)/2;
+                accFloatT origy = static_cast<accFloatT>(y)/2;
 
                 int x0 = static_cast<int>(floor(origx));
                 int y0 = static_cast<int>(floor(origy));
@@ -46,13 +46,13 @@ void bilinear_interpolation_2x(T h_input[N_channels][N_height/2][N_width/2],
                 int x1 = min(x0+1, (N_width/2)-1);
                 int y1 = min(y0+1, (N_height/2)-1);
 
-                float dx = origx - x0;
-                float dy = origy - y0;
+                accFloatT dx = origx - x0;
+                accFloatT dy = origy - y0;
 
-                static_cast<T>(h_backbone_output[nn][y][x]) = ((1-dx)*(1-dy) * static_cast<accFloatT>(h_input[nn][y0][x0]) + 
-                                                                dx*(1-dy) * static_cast<accFloatT>(h_input[nn][y0][x1]) + 
-                                                                (1-dx)*dy * static_cast<accFloatT>(h_input[nn][y1][x0]) + 
-                                                                dx*dy * static_cast<accFloatT>(h_input[nn][y1][x1]));
+                h_backbone_output[nn][y][x] = ((1-dx)*(1-dy) * static_cast<accFloatT>(h_input[nn][y0][x0]) + 
+                                               dx*(1-dy) * static_cast<accFloatT>(h_input[nn][y0][x1]) + 
+                                               (1-dx)*dy * static_cast<accFloatT>(h_input[nn][y1][x0]) + 
+                                               dx*dy * static_cast<accFloatT>(h_input[nn][y1][x1]));
                 
                 h_1x1_output[nn][y][x] += h_backbone_output[nn][y][x];
             }
