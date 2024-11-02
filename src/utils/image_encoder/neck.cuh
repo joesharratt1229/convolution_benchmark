@@ -142,12 +142,6 @@ void template_conv_and_bilinear_resid(T* backbone_input,
    gpuErrchk(cudaMemcpy(top_down_feature, d_top_down_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T), cudaMemcpyDeviceToHost));
    gpuErrchk(cudaMemcpy(h_pos_embeds, d_pos_embeds, numPosFeats*upper_scale_dims.height*upper_scale_dims.width*sizeof(T), cudaMemcpyDeviceToHost));
 
-   FILE* f = fopen("pos_embeds.txt", "w");
-   for (int i = 0; i < numPosFeats*upper_scale_dims.height*upper_scale_dims.width; i++) {
-       fprintf(f, "%f\n", static_cast<float>(h_pos_embeds[i]));
-   }
-   fclose(f);
-
    cudaFree(d_backbone_input);
    cudaFree(d_previous_input);
    cudaFree(d_lateral_feature);
