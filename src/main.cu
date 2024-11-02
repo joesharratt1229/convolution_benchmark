@@ -7,6 +7,7 @@
 #include "utils/image_encoder/posEmbedding.cuh"
 #include "utils/image_encoder/neck.cuh"
 #include "utils/test_sam.cpp"
+#include "file_util.cpp"
 
 using namespace std;
 
@@ -26,6 +27,9 @@ __host__ void printParameters();
 template<typename T>
 __host__ void randomizeWindowEmbeddings(T h_window_embeds[Nn][WINDOW_EMBEDS][WINDOW_EMBEDS]);
 
+template<typename T, int num_channels>
+__host__ void randomiseConvBias(T h_bias[num_channels]);
+
 template<typename T, int NnDim, int x_dim, int y_dim>
 void randomizePosEmbeddings(T h_pos_embeds[NnDim][x_dim][y_dim]);
 
@@ -33,8 +37,9 @@ void randomizePosEmbeddings(T h_pos_embeds[NnDim][x_dim][y_dim]);
 int main(int argc, char **argv) {
     bool DEBUG = ((argc > 1) && (std::string(argv[1]) == "--debug"));
 
+    readConvWeights("network_weights.txt");
 
-    static floatT h_input[Ni][NyPad][NxPad];
+    /*static floatT h_input[Ni][NyPad][NxPad];
     static floatT h_input_1x1[N1x1][Ny][Nx];
     static floatT h_previous_input[Nn][Ny/2][Nx/2];
 
@@ -50,6 +55,7 @@ int main(int argc, char **argv) {
     static floatT h_backbone_output[Nn][Ny][Nx];
     static floatT h_backbone_output_cpu[Nn][Ny][Nx];
     static floatT h_filters_1x1[Nn][N1x1][1][1];
+    static floatT h_bias_1x1[Nn];
 
     static floatT pos_embeds[Nn][POS_EMBEDS][POS_EMBEDS];
     static floatT h_window_embeds[Nn][WINDOW_EMBEDS][WINDOW_EMBEDS];
@@ -60,13 +66,14 @@ int main(int argc, char **argv) {
     randomizeInput<floatT, Ni, NyPad, NxPad>(h_input);
     randomizeInput<floatT, N1x1, Ny, Nx>(h_input_1x1);
     randomizeInput<floatT, Nn, Ny/2, Nx/2>(h_previous_input);
+    randomiseConvBias<floatT, Nn>(h_bias_1x1);
     padInput(h_input);
     randomizePosEmbeddings<floatT, Nn, POS_EMBEDS, POS_EMBEDS>(pos_embeds);
     randomizeWindowEmbeddings(h_window_embeds);
 
     //printf("SM count: %d\n", getSMCount());
 
-    image_encoder::template_conv_2d<floatT, 7, Ni, Nn, image_encoder::ConvImplementation::Shared>(&h_input[0][0][0], &h_convolution_output[0][0][0], h_filters_7x7);
+    image_encoder::template_conv_2d<floatT, 7, Ni, Nn, image_encoder::ConvImplementation::Shared>(&h_input[0][0][0], &h_convolution_output[0][0][0], h_filters_7x7, h_bias_1x1);
     image_encoder::template_bicubic_upsample_and_window_embed<floatT>(&pos_embeds[0][0][0], 
                                                                      &h_output_bicubic[0][0][0], 
                                                                      &h_convolution_output[0][0][0],
@@ -77,20 +84,21 @@ int main(int argc, char **argv) {
                                                                &h_previous_input[0][0][0],
                                                                &h_1x1_output[0][0][0],
                                                                &h_backbone_output[0][0][0],
-                                                               h_filters_1x1);
+                                                               h_filters_1x1,
+                                                               h_bias_1x1);
 
 
     // Check output
     if (DEBUG) {
-        convolution_cpu<floatT, Ni, NyPad, NxPad, Nn, Oy, Ox, 7>(h_input, h_filters_7x7, h_output_cpu);
+        convolution_cpu<floatT, Ni, NyPad, NxPad, Nn, Oy, Ox, 7>(h_input, h_filters_7x7, h_bias_1x1, h_output_cpu);
         bicubic_convolution_cpu<floatT, Nn, POS_EMBEDS, POS_EMBEDS, Oy, Ox>(pos_embeds, Oy, Ox, h_output_cpu_bicubic);
-        convolution_cpu<floatT, N1x1, Ny, Nx, Nn, Ny, Nx, 1>(h_input_1x1, h_filters_1x1, h_1x1_output_cpu);
+        convolution_cpu<floatT, N1x1, Ny, Nx, Nn, Ny, Nx, 1>(h_input_1x1, h_filters_1x1, h_bias_1x1, h_1x1_output_cpu);
         bilinear_interpolation_2x<floatT, Nn, Ny, Nx>(h_previous_input, h_backbone_output_cpu, h_1x1_output_cpu);
         checkOutput(&h_convolution_output[0][0][0], &h_output_cpu[0][0][0], Ox * Oy * Nn);
         checkOutput(&h_output_bicubic[0][0][0], &h_output_cpu_bicubic[0][0][0], Ox * Oy * Nn);
         checkOutput(&h_backbone_output[0][0][0], &h_backbone_output_cpu[0][0][0], Nx * Ny * Nn);
         checkOutput(&h_1x1_output[0][0][0], &h_1x1_output_cpu[0][0][0], Nx * Ny * Nn);
-    } 
+    } */
 
     return 0;
 } 
@@ -103,6 +111,11 @@ __host__ void randomizeWindowEmbeddings(T h_window_embeds[Nn][WINDOW_EMBEDS][WIN
                 h_window_embeds[nn][yy][xx] = static_cast<T>(static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f);
 }
 
+template<typename T, int num_channels>
+__host__ void randomiseConvBias(T h_bias[num_channels]) {
+    for (int nn = 0; nn < num_channels; ++nn)
+        h_bias[nn] = static_cast<T>(static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f);
+}
 
 template<typename T, int Num_channels, int x_dim, int y_dim>
 __host__

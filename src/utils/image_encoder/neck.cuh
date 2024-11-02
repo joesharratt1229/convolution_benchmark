@@ -103,7 +103,8 @@ void template_conv_and_bilinear_resid(T* backbone_input,
                                       T* previous_input,
                                       T* lateral_feature,
                                       T* top_down_feature,
-                                      T filters[Nn][N1x1][kernel_size][kernel_size])
+                                      T filters[Nn][N1x1][kernel_size][kernel_size],
+                                      T bias[Nn])
 {   
 
     dims lower_scale_dims = {Nx/2, Ny/2, N1x1};
@@ -115,7 +116,7 @@ void template_conv_and_bilinear_resid(T* backbone_input,
 
     T* d_backbone_input, *d_previous_input, *d_lateral_feature, *d_top_down_feature, *d_pos_embeds; 
     T (*d_filters)[N1x1][kernel_size][kernel_size];
-
+    T* d_bias;
     using Config = TileConfig<kernel_size>;
 
     gpuErrchk(cudaMalloc((void**)&d_backbone_input, lower_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T)));
@@ -125,10 +126,12 @@ void template_conv_and_bilinear_resid(T* backbone_input,
 
     gpuErrchk(cudaMalloc((void**)&d_pos_embeds, numPosFeats*upper_scale_dims.height*upper_scale_dims.width*sizeof(T)));
     gpuErrchk(cudaMalloc((void**)&d_filters, Nn * N1x1 * kernel_size * kernel_size * sizeof(T)));
+    gpuErrchk(cudaMalloc((void**)&d_bias, Nn * sizeof(T)));
 
     gpuErrchk(cudaMemcpy(d_backbone_input, backbone_input, lower_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T), cudaMemcpyHostToDevice));
     gpuErrchk(cudaMemcpy(d_previous_input, previous_input, upper_scale_dims.channel * lower_scale_dims.height * lower_scale_dims.width * sizeof(T), cudaMemcpyHostToDevice));
     gpuErrchk(cudaMemcpy(d_filters, filters, Nn * N1x1 * kernel_size * kernel_size * sizeof(T), cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(d_bias, bias, Nn * sizeof(T), cudaMemcpyHostToDevice));
 
     gpuErrchk(cudaMemset(d_pos_embeds, 0, numPosFeats*upper_scale_dims.height*upper_scale_dims.width*sizeof(T)));
     gpuErrchk(cudaMemset(d_lateral_feature, 0, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T)));
@@ -141,6 +144,7 @@ void template_conv_and_bilinear_resid(T* backbone_input,
     image_encoder::conv_2d_kernel_direct<T, kernel_size, N1x1, Nn><<<blocksPerGrid, threadsPerBlock>>>(d_backbone_input, 
                                                                                                        d_lateral_feature, 
                                                                                                        d_filters, 
+                                                                                                       d_bias,
                                                                                                        lower_scale_dims, 
                                                                                                        upper_scale_dims);
 

@@ -18,6 +18,7 @@ template<typename T, int kernel_size, int in_channel_size, int out_channel_size>
 __global__ void conv_2d_kernel_shared(T* d_input, 
                                T* d_output,
                                T d_filters[out_channel_size][in_channel_size][kernel_size][kernel_size],
+                               T d_bias[out_channel_size],
                                dims input_dims,
                                dims output_dims)
 {
@@ -82,10 +83,10 @@ __global__ void conv_2d_kernel_shared(T* d_input,
                 }
         
         if (col < Ox) {
-            d_output[output_channel * output_dims.height * output_dims.width + row * output_dims.width + col] = sum1;
+            d_output[output_channel * output_dims.height * output_dims.width + row * output_dims.width + col] = sum1 + d_bias[output_channel];
         }
         if (col+1 < Ox) {
-            d_output[output_channel * output_dims.height * output_dims.width + row * output_dims.width + col + 1] = sum2;
+            d_output[output_channel * output_dims.height * output_dims.width + row * output_dims.width + col + 1] = sum2 + d_bias[output_channel];
         }
     }
 }
@@ -95,6 +96,7 @@ template<typename T, int kernel_size, int in_channel_size, int out_channel_size>
 __global__ void conv_2d_kernel_direct(T* d_input, 
                                      T* d_output,
                                      T d_filters[out_channel_size][in_channel_size][kernel_size][kernel_size],
+                                     T d_bias[out_channel_size],
                                      dims input_dims,
                                      dims output_dims)
 {
@@ -118,7 +120,7 @@ __global__ void conv_2d_kernel_direct(T* d_input,
                 }
         }
         
-        d_output[output_channel*output_dims.height*output_dims.width + row*output_dims.width + col] = sum;
+        d_output[output_channel*output_dims.height*output_dims.width + row*output_dims.width + col] = sum + d_bias[output_channel];
     } 
 
 }
@@ -127,7 +129,8 @@ __global__ void conv_2d_kernel_direct(T* d_input,
 template<typename T, int kernel_size, int in_channel_size, int out_channel_size, ConvImplementation implementation>
 __host__ void template_conv_2d(T* h_input, 
                                T* h_output,
-                               T h_filters[out_channel_size][in_channel_size][kernel_size][kernel_size])
+                               T h_filters[out_channel_size][in_channel_size][kernel_size][kernel_size],
+                               T h_bias[out_channel_size])
 {
     using Config = TileConfig<kernel_size>;
     unsigned int Ox2 = (Ox + 1) / 2;
@@ -140,6 +143,7 @@ __host__ void template_conv_2d(T* h_input,
     T* d_input;
     T* d_output;
     T (*d_filters)[in_channel_size][kernel_size][kernel_size];
+    T (*d_bias);
 
     dims input_dims = {NxPad, NyPad, in_channel_size};
     dims output_dims = {Ox, Oy, out_channel_size};
@@ -147,18 +151,19 @@ __host__ void template_conv_2d(T* h_input,
     cudaMalloc((void**)&d_input, input_dims.width * input_dims.height * input_dims.channel * sizeof(T));
     cudaMalloc((void**)&d_output, output_dims.width * output_dims.height * output_dims.channel * sizeof(T));
     cudaMalloc((void**)&d_filters, out_channel_size * in_channel_size * kernel_size * kernel_size * sizeof(T));
+    cudaMalloc((void**)&d_bias, out_channel_size * sizeof(T));
 
     gpuErrchk(cudaMemcpy(d_input, h_input, input_dims.width * input_dims.height * input_dims.channel * sizeof(T), cudaMemcpyHostToDevice));
     gpuErrchk(cudaMemcpy(d_filters, h_filters, out_channel_size * in_channel_size * kernel_size * kernel_size * sizeof(T), cudaMemcpyHostToDevice));
-
+    gpuErrchk(cudaMemcpy(d_bias, h_bias, out_channel_size * sizeof(T), cudaMemcpyHostToDevice));
 
     cudaStream_t stream;
     cudaStreamCreate(&stream);
 
     if (implementation == ConvImplementation::Shared)
-        conv_2d_kernel_shared<T, kernel_size, in_channel_size, out_channel_size><<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_input, d_output, d_filters, input_dims, output_dims);
+        conv_2d_kernel_shared<T, kernel_size, in_channel_size, out_channel_size><<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_input, d_output, d_filters, d_bias, input_dims, output_dims);
     else
-        conv_2d_kernel_direct<T, kernel_size, in_channel_size, out_channel_size><<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_input, d_output, d_filters, input_dims, output_dims);
+        conv_2d_kernel_direct<T, kernel_size, in_channel_size, out_channel_size><<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_input, d_output, d_filters, d_bias, input_dims, output_dims);
     
     
     gpuErrchk(cudaDeviceSynchronize());

@@ -6,6 +6,7 @@ template<typename T, int Nz_input, int Ny_input, int Nx_input, int Nz_output, in
 __host__
 void convolution_cpu(T h_input[Nz_input][Ny_input][Nx_input], 
                      T h_filters[Nz_output][Nz_input][kernel_size][kernel_size], 
+                     T h_bias[Nz_output],
                      T h_output_cpu[Nz_output][Ny_output][Nx_output]) {
     using Config = TileConfig<kernel_size>;
 
@@ -22,7 +23,7 @@ void convolution_cpu(T h_input[Nz_input][Ny_input][Nx_input],
                         }
                     }
                 }
-                h_output_cpu[nn][oy][ox] = sum;
+                h_output_cpu[nn][oy][ox] = sum + h_bias[nn];
             }
         }
     }
