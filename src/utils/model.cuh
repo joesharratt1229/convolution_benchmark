@@ -28,4 +28,3 @@ typedef struct {
 }
 
 #endif
-
