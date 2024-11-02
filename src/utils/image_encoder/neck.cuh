@@ -17,8 +17,6 @@ __global__ void conv_and_bilinear_resid_kernel(T* previous_input,
                                                T* lateral_feature,
                                                T* top_down_feature,
                                                T* pos_embeds,
-                                               accFloatT* d_dimensions_x,
-                                               accFloatT* d_dimensions_y,
                                                dims lower_scale_dims,
                                                dims upper_scale_dims)
 {
@@ -55,12 +53,15 @@ __global__ void conv_and_bilinear_resid_kernel(T* previous_input,
     y_embed = y_embed/(upper_scale_dims.height + EPSILON) * SCALE;
     x_embed = x_embed/(upper_scale_dims.width + EPSILON) * SCALE;
 
+    __shared__ accFloatT d_dimensions_x;
+    __shared__ accFloatT d_dimensions_y;
+
     if (col <= upper_scale_dims.width && row <= upper_scale_dims.height) {
         if (output_channel < upper_scale_dims.channel && threadIdx.x == 0 && threadIdx.y == 0)
         {
             accFloatT power_term = 2*(floorf((output_channel)/2))/upper_scale_dims.channel;
-            d_dimensions_x[output_channel] = std::pow(TEMPERATURE, power_term);
-            d_dimensions_y[output_channel] = std::pow(TEMPERATURE, power_term);
+            d_dimensions_x = std::pow(TEMPERATURE, power_term);
+            d_dimensions_y = std::pow(TEMPERATURE, power_term);
         }
 
         __syncthreads();
@@ -68,7 +69,7 @@ __global__ void conv_and_bilinear_resid_kernel(T* previous_input,
         const bool is_even = output_channel%2 == 0;
         const bool is_first_half = output_channel < upper_scale_dims.channel/2;
         const accFloatT embed_val = is_first_half ? y_embed : x_embed;
-        const accFloatT dim = is_first_half ? d_dimensions_y[output_channel] : d_dimensions_x[output_channel];
+        const accFloatT dim = is_first_half ? d_dimensions_y : d_dimensions_x;
 
         accFloatT val = is_even ? std::sin(embed_val / dim) : std::cos(embed_val / dim);
         pos_embeds[output_channel * (upper_scale_dims.height * upper_scale_dims.width) + row * upper_scale_dims.width + col] = static_cast<T>(val);
@@ -94,7 +95,6 @@ void template_conv_and_bilinear_resid(T* backbone_input,
 
     T* d_backbone_input, *d_previous_input, *d_lateral_feature, *d_top_down_feature, *d_pos_embeds; 
     T (*d_filters)[N1x1][kernel_size][kernel_size];
-    accFloatT *d_dimensions_x, *d_dimensions_y;
 
     using Config = TileConfig<kernel_size>;
 
@@ -104,8 +104,6 @@ void template_conv_and_bilinear_resid(T* backbone_input,
     gpuErrchk(cudaMalloc((void**)&d_top_down_feature, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T)));
 
     gpuErrchk(cudaMalloc((void**)&d_pos_embeds, numPosFeats*upper_scale_dims.height*upper_scale_dims.width*sizeof(T)));
-    gpuErrchk(cudaMalloc((void**)&d_dimensions_x, numPosFeats*sizeof(accFloatT)));
-    gpuErrchk(cudaMalloc((void**)&d_dimensions_y, numPosFeats*sizeof(accFloatT)));
     gpuErrchk(cudaMalloc((void**)&d_filters, Nn * N1x1 * kernel_size * kernel_size * sizeof(T)));
 
     gpuErrchk(cudaMemcpy(d_backbone_input, backbone_input, lower_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T), cudaMemcpyHostToDevice));
@@ -113,10 +111,6 @@ void template_conv_and_bilinear_resid(T* backbone_input,
     gpuErrchk(cudaMemcpy(d_filters, filters, Nn * N1x1 * kernel_size * kernel_size * sizeof(T), cudaMemcpyHostToDevice));
 
     gpuErrchk(cudaMemset(d_pos_embeds, 0, numPosFeats*upper_scale_dims.height*upper_scale_dims.width*sizeof(T)));
-    gpuErrchk(cudaMemset(d_dimensions_x, 0, numPosFeats*sizeof(accFloatT)));
-    gpuErrchk(cudaMemset(d_dimensions_y, 0, numPosFeats*sizeof(accFloatT)));
-
-
 
    dim3 threadsPerBlock(Config::TILE_SIZE, Config::TILE_SIZE, 1);
    dim3 blocksPerGrid((upper_scale_dims.width + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
@@ -133,8 +127,6 @@ void template_conv_and_bilinear_resid(T* backbone_input,
                                                                                       d_lateral_feature, 
                                                                                       d_top_down_feature, 
                                                                                       d_pos_embeds,
-                                                                                      d_dimensions_x,
-                                                                                      d_dimensions_y,
                                                                                       lower_scale_dims, 
                                                                                       upper_scale_dims);
 
@@ -147,8 +139,6 @@ void template_conv_and_bilinear_resid(T* backbone_input,
    cudaFree(d_lateral_feature);
    cudaFree(d_top_down_feature);
    cudaFree(d_pos_embeds);
-   cudaFree(d_dimensions_x);
-   cudaFree(d_dimensions_y);
 
 }
 
