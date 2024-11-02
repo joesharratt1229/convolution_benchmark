@@ -45,6 +45,9 @@ __global__ void conv_and_bilinear_resid_kernel(T* previous_input,
     unsigned int row = blockIdx.y * blockDim.y + threadIdx.y;
     unsigned int output_channel = blockIdx.z;
 
+    if (output_channel >= upper_scale_dims.channel)
+        return;
+
     if (col <= upper_scale_dims.width && row <= upper_scale_dims.height) {
         float origx = static_cast<float>(col)/2;
         float origy = static_cast<float>(row)/2;
@@ -128,11 +131,12 @@ void template_conv_and_bilinear_resid(T* backbone_input,
     gpuErrchk(cudaMemcpy(d_filters, filters, Nn * N1x1 * kernel_size * kernel_size * sizeof(T), cudaMemcpyHostToDevice));
 
     gpuErrchk(cudaMemset(d_pos_embeds, 0, numPosFeats*upper_scale_dims.height*upper_scale_dims.width*sizeof(T)));
+    gpuErrchk(cudaMemset(d_lateral_feature, 0, upper_scale_dims.channel * upper_scale_dims.height * upper_scale_dims.width * sizeof(T)));
 
    dim3 threadsPerBlock(Config::TILE_SIZE, Config::TILE_SIZE, 1);
    dim3 blocksPerGrid((upper_scale_dims.width + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
                       (upper_scale_dims.height + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
-                      upper_scale_dims.channel);
+                      20);
 
     image_encoder::conv_2d_kernel_direct<T, kernel_size, N1x1, Nn><<<blocksPerGrid, threadsPerBlock>>>(d_backbone_input, 
                                                                                                        d_lateral_feature, 

@@ -59,10 +59,12 @@ int main(int argc, char **argv) {
     randomizeFilters<floatT, Nn, N1x1, 1, 1>(h_filters_1x1);
     randomizeInput<floatT, Ni, NyPad, NxPad>(h_input);
     randomizeInput<floatT, N1x1, Ny, Nx>(h_input_1x1);
+    randomizeInput<floatT, Nn, Ny/2, Nx/2>(h_previous_input);
     padInput(h_input);
     randomizePosEmbeddings<floatT, Nn, POS_EMBEDS, POS_EMBEDS>(pos_embeds);
     randomizeWindowEmbeddings(h_window_embeds);
 
+    printf("SM count: %d\n", getSMCount());
 
     image_encoder::template_conv_2d<floatT, 7, Ni, Nn, image_encoder::ConvImplementation::Shared>(&h_input[0][0][0], &h_convolution_output[0][0][0], h_filters_7x7);
     image_encoder::template_bicubic_upsample_and_window_embed<floatT>(&pos_embeds[0][0][0], 
