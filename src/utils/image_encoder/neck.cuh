@@ -12,6 +12,26 @@ namespace image_encoder {
 #define EPSILON 1e-6
 #define SCALE 2*M_PI
 
+
+template<typename T>
+__device__ __forceinline__ accFloatT bilinear_interpolate(
+    const T* input,
+    int output_channel,
+    int x0, int x1,
+    int y0, int y1,
+    float dx, float dy,
+    dims lower_scale_dims) 
+{
+    const size_t base_idx = output_channel * lower_scale_dims.height * lower_scale_dims.width;
+    const size_t idx_y0 = y0 * lower_scale_dims.width;
+    const size_t idx_y1 = y1 * lower_scale_dims.width;
+    
+    return ((1-dx)*(1-dy) * static_cast<accFloatT>(input[base_idx + idx_y0 + x0]) + 
+            dx*(1-dy) * static_cast<accFloatT>(input[base_idx + idx_y0 + x1]) + 
+            (1-dx)*dy * static_cast<accFloatT>(input[base_idx + idx_y1 + x0]) + 
+            dx*dy * static_cast<accFloatT>(input[base_idx + idx_y1 + x1]));
+}
+
 template<typename T, int kernel_size>
 __global__ void conv_and_bilinear_resid_kernel(T* previous_input,
                                                T* lateral_feature,
@@ -37,10 +57,7 @@ __global__ void conv_and_bilinear_resid_kernel(T* previous_input,
         float dx = origx - x0;
         float dy = origy - y0;
 
-        accFloatT value = ((1-dx)*(1-dy) * static_cast<accFloatT>(previous_input[output_channel*lower_scale_dims.height*lower_scale_dims.width + y0*lower_scale_dims.width + x0]) + 
-                   dx*(1-dy) * static_cast<accFloatT>(previous_input[output_channel*lower_scale_dims.height*lower_scale_dims.width + y0*lower_scale_dims.width + x1]) + 
-                   (1-dx)*dy * static_cast<accFloatT>(previous_input[output_channel*lower_scale_dims.height*lower_scale_dims.width + y1*lower_scale_dims.width + x0]) + 
-                   dx*dy * static_cast<accFloatT>(previous_input[output_channel*lower_scale_dims.height*lower_scale_dims.width + y1*lower_scale_dims.width + x1]));
+        accFloatT value = bilinear_interpolate(previous_input, output_channel, x0, x1, y0, y1, dx, dy, lower_scale_dims);
 
         top_down_feature[output_channel*upper_scale_dims.height*upper_scale_dims.width + row*upper_scale_dims.width + col] = static_cast<T>(value);
 
