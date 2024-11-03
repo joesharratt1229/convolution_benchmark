@@ -10,6 +10,7 @@
 #include "utils/image_encoder/neck.cuh"
 #include "utils/model.cuh"
 #include "utils/test_sam.cpp"
+#include "utils/conv/config.cuh"
 
 using namespace std;
 
@@ -20,8 +21,8 @@ void read_weights_from_file(const char *filename,
 template<typename T, int NnDim, int NiDim, int KyDim, int KxDim>
 __host__ void randomizeFilters(T h_filters[NnDim][NiDim][KyDim][KxDim]);
 
-template<typename T, int NiDim, int NyDim, int NxDim>
-__host__ void randomizeInput(T h_input[NiDim][NyDim][NxDim]);
+template<typename T> 
+__host__ void randomizeInput(T* h_input, int NiDim, int NyDim, int NxDim);
 
 template<typename T>
 __host__ void padInput(T h_input[Ni][NyPad][NxPad]);
@@ -46,6 +47,53 @@ int main(int argc, char **argv) {
 
     const char *filename = "model.bin";
     read_weights_from_file(filename, &neck_layer);
+
+    x_tensor<floatT> x_input;
+    x_tensor<floatT> x_output;
+    x_tensor<floatT> pos_embeds;
+
+    for (int i = 0; i < x_input.size(); i++) {
+        int output_size = Nx;
+
+        x_input.data[i] = (floatT*)malloc(model::Nin1 * output_size * output_size * sizeof(floatT));
+
+        if (x_input.data[i] == NULL) {
+            printf("Error allocating memory for x_input.data[%d]\n", i);
+            exit(1);
+        }
+        
+        x_input.set_dimensions(i, output_size, output_size, model::Nin1);
+        randomizeInput(x_input.data[i], model::Nin1, output_size, output_size);
+        output_size *= 2;
+    }
+
+    for (int i = 0; i < x_output.size(); i++) {
+        int output_size = Nx;
+        x_output.data[i] = (floatT*)malloc(model::Nout * output_size * output_size * sizeof(floatT));
+        
+        if (x_output.data[i] == NULL) {
+            printf("Error allocating memory for x_output.data[%d]\n", i);
+            exit(1);
+        }
+        x_output.set_dimensions(i, output_size, output_size, model::Nout);
+        randomizeInput(x_output.data[i], model::Nout, output_size, output_size);
+    
+
+        pos_embeds.data[i] = (floatT*)malloc(model::Nout * output_size * output_size * sizeof(floatT));
+
+        if (pos_embeds.data[i] == NULL) {
+            printf("Error allocating memory for pos_embeds.data[%d]\n", i);
+            exit(1);
+        }
+        pos_embeds.set_dimensions(i, output_size, output_size, model::Nout);
+        memset(pos_embeds.data[i], 0, model::Nout * output_size * output_size * sizeof(floatT));
+
+    }
+
+    image_encoder::template_conv_and_bilinear_resid_new<floatT, 1>(x_input, x_output, pos_embeds, neck_layer);
+
+
+
 
     /*static floatT h_input[Ni][NyPad][NxPad];
     static floatT h_input_1x1[N1x1][Ny][Nx];
@@ -145,13 +193,16 @@ void randomizeFilters(T h_filters[NnDim][NiDim][KyDim][KxDim]) {
                     h_filters[nn][ni][yy][xx] = static_cast<T>(static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f);
 }
 
-template<typename T, int NiDim, int NyDim, int NxDim>
+
+template<typename T>
 __host__
-void randomizeInput(T h_input[NiDim][NyDim][NxDim]) {
+void randomizeInput(T* h_input, int NiDim, int NyDim, int NxDim) {
     for (int ni = 0; ni < NiDim; ++ni)
         for (int yy = 0; yy < NyDim; ++yy)
-            for (int xx = 0; xx < NxDim; ++xx)
-                h_input[ni][yy][xx] = static_cast<T>(static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f);
+            for (int xx = 0; xx < NxDim; ++xx) {
+                int idx = ni * (NyDim * NxDim) + yy * NxDim + xx;
+                h_input[idx] = static_cast<T>(static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f);
+            }
 }
 
 template<typename T>
@@ -168,32 +219,6 @@ void padInput(T h_input[Ni][NyPad][NxPad]) {
                 h_input[z][y][NxPad - 1] = 0;
             }
     }
-}
-
-
-template<typename T>
-__host__
-void printParameters() {
-    printf("\n\n");
-    printf("Padding: %d\n", Pad);
-    printf("Stride (StrideX, StrideY): (%d, %d)\n", StrideX, StrideY);
-
-    printf("\n\n");
-    printf("Input dimensions (Nx, Ny, Ni): (%d, %d, %d)\n", Nx, Ny, Ni);
-    printf("Input dimensions with Pad (Nx+%d, Ny+%d, Ni): (%d, %d, %d)\n", (2 * Pad), (2 * Pad), NxPad, NyPad,
-           Ni);
-    printf("Input number of elements: %dx%dx%d = %d\n", Nx, Ny, Ni, Nx * Ny * Ni);
-    printf("Input memory size: %lu bytes\n", I_MEM_SIZE);
-
-    printf("\n\n");
-    printf("Output dimensions (Ox, Oy, Nn): (%d, %d, %d)\n", Ox, Oy, Nn);
-    printf("Output number of elements: %dx%dx%d = %d\n", Ox, Oy, Nn, Ox * Oy * Nn);
-    printf("Output memory size: %lu bytes\n", O_MEM_SIZE);
-
-    printf("\n\n");
-    printf("Weights dimensions (Kx, Ky, Ni, Nn): (%d, %d, %d, %d)\n", Kx, Ky, Ni, Nn);
-    printf("Weights number of elements: %dx%dx%dx%d = %d\n", Kx, Ky, Ni, Nn, Kx * Ky * Ni * Nn);
-    printf("Weights memory size: %lu bytes\n", F_MEM_SIZE);
 }
 
 
@@ -227,6 +252,10 @@ void read_weights_from_file(const char *filename,
             printf("Error reading weights from file %s\n", filename);
             exit(1);
         }
+
+        printf("Element [0][0][0][0]: %f\n", layer->conv[0][0][0][0]);
+
+
         if(fread(layer->bias, sizeof(floatT), dims[0]+1, file) != dims[0]+1) {
             printf("Error reading biases from file %s\n", filename);
             exit(1);

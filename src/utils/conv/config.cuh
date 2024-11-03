@@ -6,6 +6,7 @@
 template<int KernelSize>
 struct KernelTraits ;
 
+#define NUM_INPUTS 4
 
 template<int KernelSize>
 struct TileConfig {
@@ -50,5 +51,53 @@ template<int kernel_size>
 constexpr TileConfig<kernel_size> get_tile_config() {
     return TileConfig<kernel_size>{};
 }
+
+
+template <typename T>
+struct x_tensor {
+    T* data[NUM_INPUTS];  // Array of pointers
+
+    struct Dimensions {
+        int x_dimension;
+        int y_dimension;
+        int num_channels;
+    } dims[NUM_INPUTS];
+
+    x_tensor() = default;
+
+
+    void set_dimensions(int index, int x_dim, int y_dim, int channels) {
+        if (index < NUM_INPUTS) {
+            dims[index].x_dimension = x_dim;
+            dims[index].y_dimension = y_dim;
+            dims[index].num_channels = channels;
+        }
+    }
+
+    // Getter methods for dimensions of a specific array
+    int x_dim(int index) const { 
+        return dims[index].x_dimension; 
+    }
+    
+    int y_dim(int index) const { 
+        return dims[index].y_dimension; 
+    }
+    
+    int channels(int index) const { 
+        return dims[index].num_channels; 
+    }
+
+    T* get(int index) {
+        return data[index];
+    }
+
+    const T* get(int index) const {  // Added const version for read-only access
+        return data[index];
+    }
+
+    static constexpr int size() {
+        return NUM_INPUTS;
+    }
+};
 
 #endif

@@ -167,5 +167,56 @@ void template_conv_and_bilinear_resid(T* backbone_input,
 
 }
 
+
+
+template<typename T, int kernel_size>
+void template_conv_and_bilinear_resid_new(x_tensor<T>& x_input, 
+                                          x_tensor<T>& x_output,
+                                          x_tensor<T>& pos_embeds,
+                                          model::NeckLayer<floatT, model::Nin1, model::Nin2, model::Nin3, model::Nin4>* neck_layer)
+{   
+
+    x_tensor<T> d_x_input;
+    x_tensor<T> d_x_output;
+    x_tensor<T> d_pos_embeds;
+
+
+    for (int i = 0; i < neck_layer.size(); i++) {
+
+        gpuErrchk(cudaMalloc((void**)&d_x_input.data[i], x_input.x_dim(i) * x_input.y_dim(i) * x_input.channels(i) * sizeof(T)));
+        gpuErrchk(cudaMalloc((void**)&d_x_output.data[i], x_output.x_dim(i) * x_output.y_dim(i) * x_output.channels(i) * sizeof(T)));
+        gpuErrchk(cudaMalloc((void**)&d_pos_embeds.data[i], pos_embeds.x_dim(i) * pos_embeds.y_dim(i) * pos_embeds.channels(i) * sizeof(T)));
+
+        gpuErrchk(cudaMemcpy(d_x_input.data[i], x_input.data[i], x_input.x_dim(i) * x_input.y_dim(i) * x_input.channels(i) * sizeof(T), cudaMemcpyHostToDevice));
+        gpuErrchk(cudaMemset(d_x_output.data[i], 0, x_output.x_dim(i) * x_output.y_dim(i) * x_output.channels(i) * sizeof(T)));
+        gpuErrchk(cudaMemset(d_pos_embeds.data[i], 0, pos_embeds.x_dim(i) * pos_embeds.y_dim(i) * pos_embeds.channels(i) * sizeof(T)));
+
+        if (i == 0 || i == 1) {
+            dim3 threadsPerBlock(Config::TILE_SIZE, Config::TILE_SIZE, 1);
+            dim3 blocksPerGrid((x_input.x_dim(i) + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
+                               (x_input.y_dim(i) + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
+                               x_input.channels(i));
+
+            auto* weight = neck_layer->get_layer_runtime(i)->conv;
+            auto* bias = neck_layer->get_layer_runtime(i)->bias;
+
+            image_encoder::conv_2d_kernel_direct<T, kernel_size, model::Nin1, model::Nin2><<<blocksPerGrid, threadsPerBlock>>>(d_x_input.data[i], 
+                                                                                                                               d_x_output.data[i],
+                                                                                                                               
+                                                                                                                               x_input.dims[i],
+                                                                                                                               x_output.dims[i]);
+
+            gpuErrchk(cudaDeviceSynchronize());
+            cudaMemcpy(x_output.data[i], d_x_output.data[i], x_output.x_dim(i) * x_output.y_dim(i) * x_output.channels(i) * sizeof(T), cudaMemcpyDeviceToHost);
+        }
+    }
+
+    cudaFree(d_x_input.data);
+    cudaFree(d_x_output.data);
+    cudaFree(d_pos_embeds.data);
+
+
+}
+
 }
 #endif

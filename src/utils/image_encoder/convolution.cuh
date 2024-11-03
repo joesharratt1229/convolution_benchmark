@@ -6,6 +6,7 @@
 #include "utils/conv/config.cuh"
 #include "utils/common.h"
 #include "utils/gpu_utils.cuh"
+#include "utils/conv/config.cuh"
 
 namespace image_encoder {
 
@@ -97,8 +98,8 @@ __global__ void conv_2d_kernel_direct(T* d_input,
                                      T* d_output,
                                      T d_filters[out_channel_size][in_channel_size][kernel_size][kernel_size],
                                      T d_bias[out_channel_size],
-                                     dims input_dims,
-                                     dims output_dims)
+                                     Dimensions input_dims,
+                                     Dimensions output_dims)
 {
     using Config = TileConfig<kernel_size>;
 
@@ -108,7 +109,7 @@ __global__ void conv_2d_kernel_direct(T* d_input,
 
     T sum = 0.0f;
 
-    if (col <= output_dims.width && row <= output_dims.height && output_channel <= out_channel_size) {
+    if (col <= output_dims.x_dimension && row <= output_dims.y_dimension && output_channel <= out_channel_size) {
         #pragma unroll
         for (int i = 0; i < in_channel_size; i++){
             #pragma unroll
@@ -116,11 +117,11 @@ __global__ void conv_2d_kernel_direct(T* d_input,
                 #pragma unroll
                 for (int x = 0; x < kernel_size; x++) {
                     T filter_val = d_filters[output_channel][i][y][x];
-                    sum += d_input[i * (output_dims.width * output_dims.height) + (row + y) * output_dims.width + (col + x)] * filter_val;
+                    sum += d_input[i * (output_dims.x_dimension * output_dims.y_dimension) + (row + y) * output_dims.x_dimension + (col + x)] * filter_val;
                 }
         }
         
-        d_output[output_channel*output_dims.height*output_dims.width + row*output_dims.width + col] = sum + d_bias[output_channel];
+        d_output[output_channel*output_dims.y_dimension*output_dims.x_dimension + row*output_dims.x_dimension + col] = sum + d_bias[output_channel];
     } 
 
 }

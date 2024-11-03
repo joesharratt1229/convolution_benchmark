@@ -1,6 +1,6 @@
 CPP=g++
 NVCC=nvcc
-CFLAGS=--std=c++11 -g --default-stream per-thread
+CFLAGS=--std=c++14 -g --default-stream per-thread
 INCFLAGS=-I$(SRCDIR)
 DEBUGFLAGS=-G -lineinfo
 REGFLAGS=-maxrregcount=30
@@ -18,7 +18,7 @@ HEADERS=
 SOURCES := $(SRCDIR)/main.cu 
 
 $(MODULE): $(SOURCES) $(HEADERS)
-	$(NVCC) $^ $(CFLAGS) $(REGFLAGS) $(NVFLAGS) $(INCFLAGS) -o $@ -DNx=128 -DNy=128 -DKx=7 -DKy=7 -DNi=3 -DNn=16 -DN1x1=64 -DENABLE_BP16
+	$(NVCC) $^ $(CFLAGS) $(REGFLAGS) $(NVFLAGS) $(INCFLAGS) -o $@ -DNx=128 -DNy=128 -DKx=7 -DKy=7 -DNi=3 -DNn=16 -DN1x1=64 -DENABLE_FP32
 
 
 debug_build: CFLAGS += $(DEBUGFLAGS)
