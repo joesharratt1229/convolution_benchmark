@@ -6,6 +6,7 @@
 #include "utils/gpu_utils.cuh"
 #include "utils/conv/config.cuh"
 #include "utils/image_encoder/convolution.cuh"
+#include "utils/model.cuh"
 
 namespace image_encoder {
 
@@ -173,15 +174,33 @@ template<typename T, int kernel_size>
 void template_conv_and_bilinear_resid_new(x_tensor<T>& x_input, 
                                           x_tensor<T>& x_output,
                                           x_tensor<T>& pos_embeds,
-                                          model::NeckLayer<floatT, model::Nin1, model::Nin2, model::Nin3, model::Nin4>* neck_layer)
+                                          model::NeckLayer<T, model::Nin1, model::Nin2, model::Nin3, model::Nin4>& neck_layer)
 {   
 
     x_tensor<T> d_x_input;
     x_tensor<T> d_x_output;
     x_tensor<T> d_pos_embeds;
 
+    int output_channel = model::Nout;
+
+    int input_channels[4] = {model::Nin1, model::Nin2, model::Nin3, model::Nin4};
+
+    using Config = TileConfig<kernel_size>;
+
 
     for (int i = 0; i < neck_layer.size(); i++) {
+        T (*weight)[model::Nout][kernel_size][kernel_size] = neck_layer.get_layer_runtime(i)->conv;
+        T* bias = neck_layer.get_layer_runtime(i)->bias;
+
+        T* d_weight;
+        T* d_bias;
+
+        gpuErrchk(cudaMalloc((void**)&d_weight, input_channels[i] * output_channel * kernel_size * kernel_size * sizeof(T)));
+        gpuErrchk(cudaMalloc((void**)&d_bias, output_channel * sizeof(T)));
+
+        gpuErrchk(cudaMemcpy(d_weight, weight, input_channels[i] * output_channel * kernel_size * kernel_size * sizeof(T), cudaMemcpyHostToDevice));
+        gpuErrchk(cudaMemcpy(d_bias, bias, output_channel * sizeof(T), cudaMemcpyHostToDevice));
+
 
         gpuErrchk(cudaMalloc((void**)&d_x_input.data[i], x_input.x_dim(i) * x_input.y_dim(i) * x_input.channels(i) * sizeof(T)));
         gpuErrchk(cudaMalloc((void**)&d_x_output.data[i], x_output.x_dim(i) * x_output.y_dim(i) * x_output.channels(i) * sizeof(T)));
@@ -197,14 +216,14 @@ void template_conv_and_bilinear_resid_new(x_tensor<T>& x_input,
                                (x_input.y_dim(i) + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
                                x_input.channels(i));
 
-            auto* weight = neck_layer->get_layer_runtime(i)->conv;
-            auto* bias = neck_layer->get_layer_runtime(i)->bias;
+            
 
-            image_encoder::conv_2d_kernel_direct<T, kernel_size, model::Nin1, model::Nin2><<<blocksPerGrid, threadsPerBlock>>>(d_x_input.data[i], 
-                                                                                                                               d_x_output.data[i],
-                                                                                                                               
-                                                                                                                               x_input.dims[i],
-                                                                                                                               x_output.dims[i]);
+            image_encoder::conv_2d_kernel_direct<T, kernel_size><<<blocksPerGrid, threadsPerBlock>>>(d_x_input.data[i], 
+                                                                                                    d_x_output.data[i],
+                                                                                                    d_weight,
+                                                                                                    d_bias,
+                                                                                                    x_input.dims[i],
+                                                                                                    x_output.dims[i]);
 
             gpuErrchk(cudaDeviceSynchronize());
             cudaMemcpy(x_output.data[i], d_x_output.data[i], x_output.x_dim(i) * x_output.y_dim(i) * x_output.channels(i) * sizeof(T), cudaMemcpyDeviceToHost);
@@ -215,7 +234,9 @@ void template_conv_and_bilinear_resid_new(x_tensor<T>& x_input,
     cudaFree(d_x_output.data);
     cudaFree(d_pos_embeds.data);
 
-
+    for (int i = 0; i < neck_layer.size(); i++) {
+        printf("x_output.data[%d]: %p\n", i, (void*)x_output.data[i]);
+    }
 }
 
 }

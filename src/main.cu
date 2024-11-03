@@ -253,8 +253,7 @@ void read_weights_from_file(const char *filename,
             exit(1);
         }
 
-        printf("Element [0][0][0][0]: %f\n", layer->conv[0][0][0][0]);
-
+        neck_layer->set_dimensions(i, dims[2], dims[3], dims[1], dims[0]);
 
         if(fread(layer->bias, sizeof(floatT), dims[0]+1, file) != dims[0]+1) {
             printf("Error reading biases from file %s\n", filename);

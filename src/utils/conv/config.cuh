@@ -52,19 +52,19 @@ constexpr TileConfig<kernel_size> get_tile_config() {
     return TileConfig<kernel_size>{};
 }
 
+struct Dimensions {
+    int x_dimension;
+    int y_dimension;
+    int num_channels;
+};
 
 template <typename T>
 struct x_tensor {
     T* data[NUM_INPUTS];  // Array of pointers
 
-    struct Dimensions {
-        int x_dimension;
-        int y_dimension;
-        int num_channels;
-    } dims[NUM_INPUTS];
+    Dimensions dims[NUM_INPUTS];
 
     x_tensor() = default;
-
 
     void set_dimensions(int index, int x_dim, int y_dim, int channels) {
         if (index < NUM_INPUTS) {
