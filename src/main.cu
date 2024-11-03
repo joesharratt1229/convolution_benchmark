@@ -1,16 +1,21 @@
 #include <string>
 #include <cmath>
+#include <stdint.h>
+#include <cassert>
 
 #include "utils/common.h" 
 #include "utils/image_encoder/convolution.cuh"
 #include "utils/image_encoder/upsample.cuh"
 #include "utils/image_encoder/posEmbedding.cuh"
 #include "utils/image_encoder/neck.cuh"
+#include "utils/model.cuh"
 #include "utils/test_sam.cpp"
-#include "file_util.cpp"
 
 using namespace std;
 
+
+void read_weights_from_file(const char *filename, 
+                            model::NeckLayer<floatT, model::Nin1, model::Nin2, model::Nin3, model::Nin4>* neck_layer);
 
 template<typename T, int NnDim, int NiDim, int KyDim, int KxDim>
 __host__ void randomizeFilters(T h_filters[NnDim][NiDim][KyDim][KxDim]);
@@ -37,7 +42,10 @@ void randomizePosEmbeddings(T h_pos_embeds[NnDim][x_dim][y_dim]);
 int main(int argc, char **argv) {
     bool DEBUG = ((argc > 1) && (std::string(argv[1]) == "--debug"));
 
-    readConvWeights("network_weights.txt");
+    model::NeckLayer<floatT, model::Nin1, model::Nin2, model::Nin3, model::Nin4> neck_layer;
+
+    const char *filename = "model.bin";
+    read_weights_from_file(filename, &neck_layer);
 
     /*static floatT h_input[Ni][NyPad][NxPad];
     static floatT h_input_1x1[N1x1][Ny][Nx];
@@ -189,3 +197,41 @@ void printParameters() {
 }
 
 
+void read_weights_from_file(const char *filename, 
+                            model::NeckLayer<floatT, model::Nin1, model::Nin2, model::Nin3, model::Nin4>* neck_layer) {
+    FILE *file = fopen(filename, "r");
+    if (file == NULL) {
+        printf("Error opening file %s\n", filename);
+        exit(1);
+    }
+
+    int32_t num_layers;
+
+    if(fread(&num_layers, sizeof(int32_t), 1, file) != 1) {
+        printf("Error reading number of layers from file %s\n", filename);
+        exit(1);
+    }
+
+    assert(num_layers == neck_layer->size() && "Invalid number of layers");
+
+    for (int i = 0; i < neck_layer->size(); i++) {
+        auto* layer = neck_layer->get_layer_runtime(i);
+        int32_t dims[4];
+        if(fread(&dims, sizeof(int32_t) * 4, 1, file) != 1) {
+            printf("Error reading dimensions from file %s\n", filename);
+            exit(1);
+        }
+        printf("Layer %d dimensions: %d %d %d %d\n", i, dims[0], dims[1], dims[2], dims[3]);
+
+        if(fread(layer->conv, sizeof(floatT), dims[0] * dims[1] * dims[2] * dims[3], file) != dims[0] * dims[1] * dims[2] * dims[3]) {
+            printf("Error reading weights from file %s\n", filename);
+            exit(1);
+        }
+        if(fread(layer->bias, sizeof(floatT), dims[0]+1, file) != dims[0]+1) {
+            printf("Error reading biases from file %s\n", filename);
+            exit(1);
+        }
+    }
+
+    fclose(file);
+}
