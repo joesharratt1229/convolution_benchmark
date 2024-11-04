@@ -107,6 +107,10 @@ __global__ void conv_2d_kernel_direct(T* d_input,
     unsigned int row = blockIdx.y * Config::TILE_SIZE + threadIdx.y;
     unsigned int output_channel = blockIdx.z;
 
+    if (col >= output_dims.x_dimension || row >= output_dims.y_dimension || output_channel >= output_dims.num_channels) {
+        return;
+    }
+
     T sum = 0.0f;
 
     if (col <= output_dims.x_dimension && row <= output_dims.y_dimension && output_channel <= output_dims.num_channels) {

@@ -94,6 +94,9 @@ int main(int argc, char **argv) {
 
     image_encoder::template_conv_and_bilinear_resid_new<floatT, 1>(x_input, x_output, pos_embeds, neck_layer);
 
+    for (int i = 0; i < neck_layer.size(); i++) {
+        printf("x_output.data[%d]: %f\n", i, x_output.data[i][0]);
+    }
 
 
 
