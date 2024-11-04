@@ -52,6 +52,8 @@ int main(int argc, char **argv) {
     x_tensor<floatT> x_output;
     x_tensor<floatT> pos_embeds;
 
+    int input_channels[4] = {model::Nin1, model::Nin2, model::Nin3, model::Nin4};
+
     for (int i = 0; i < x_input.size(); i++) {
         int output_size = Nx;
 
@@ -62,8 +64,8 @@ int main(int argc, char **argv) {
             exit(1);
         }
         
-        x_input.set_dimensions(i, output_size, output_size, model::Nin1);
-        randomizeInput(x_input.data[i], model::Nin1, output_size, output_size);
+        x_input.set_dimensions(i, output_size, output_size, input_channels[i]);
+        randomizeInput(x_input.data[i], input_channels[i], output_size, output_size);
         output_size *= 2;
     }
 
@@ -76,7 +78,7 @@ int main(int argc, char **argv) {
             exit(1);
         }
         x_output.set_dimensions(i, output_size, output_size, model::Nout);
-        randomizeInput(x_output.data[i], model::Nout, output_size, output_size);
+        memset(x_output.data[i], 0, model::Nout * output_size * output_size * sizeof(floatT));
     
 
         pos_embeds.data[i] = (floatT*)malloc(model::Nout * output_size * output_size * sizeof(floatT));
@@ -248,17 +250,34 @@ void read_weights_from_file(const char *filename,
         }
         printf("Layer %d dimensions: %d %d %d %d\n", i, dims[0], dims[1], dims[2], dims[3]);
 
-        if(fread(layer->conv, sizeof(floatT), dims[0] * dims[1] * dims[2] * dims[3], file) != dims[0] * dims[1] * dims[2] * dims[3]) {
+        floatT *temp_buf = (floatT*)malloc(dims[0] * dims[1] * sizeof(floatT));
+
+        if(fread(temp_buf, sizeof(floatT), dims[0] * dims[1] , file) != dims[0] * dims[1]) {
             printf("Error reading weights from file %s\n", filename);
             exit(1);
         }
 
+        for (int j = 0; j < dims[0]; j++) {
+            for (int k = 0; k < dims[1]; k++) {
+                layer->conv[j][k][0][0] = temp_buf[j * dims[1] + k];
+            }
+        }
+
         neck_layer->set_dimensions(i, dims[2], dims[3], dims[1], dims[0]);
 
-        if(fread(layer->bias, sizeof(floatT), dims[0]+1, file) != dims[0]+1) {
+        floatT *temp_buf_bias = (floatT*)malloc((dims[0]+1) * sizeof(floatT));
+
+        if(fread(temp_buf_bias, sizeof(floatT), dims[0]+1, file) != dims[0]+1) {
             printf("Error reading biases from file %s\n", filename);
             exit(1);
         }
+
+        for (int j = 0; j < dims[0]+1; j++) {
+            layer->bias[j] = temp_buf_bias[j+1];
+        }
+
+        free(temp_buf);
+        free(temp_buf_bias);
     }
 
     fclose(file);
