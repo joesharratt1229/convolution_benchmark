@@ -67,7 +67,11 @@ int main(int argc, char **argv) {
         x_input.set_dimensions(i, output_size, output_size, input_channels[i]);
         randomizeInput(x_input.data[i], input_channels[i], output_size, output_size);
         output_size = 2 * output_size;
+
+        //printf("Input dimensions: %d %d %d\n", x_input.x_dim(i), x_input.y_dim(i), x_input.channels(i));
     }
+
+    output_size = Nx;
 
     for (int i = 0; i < x_output.size(); i++) {
         x_output.data[i] = (floatT*)malloc(model::Nout * output_size * output_size * sizeof(floatT));
@@ -89,12 +93,14 @@ int main(int argc, char **argv) {
         pos_embeds.set_dimensions(i, output_size, output_size, model::Nout);
         memset(pos_embeds.data[i], 0, model::Nout * output_size * output_size * sizeof(floatT));
         output_size = 2 * output_size;
+
+        //printf("Output dimensions: %d %d %d\n", x_output.x_dim(i), x_output.y_dim(i), x_output.channels(i));
     }
 
     image_encoder::template_conv_and_bilinear_resid_new<floatT, 1>(x_input, x_output, pos_embeds, neck_layer);
 
     for (int i = 0; i < neck_layer.size(); i++) {
-        printf("x_output.data[%d]: %f\n", i, x_output.data[i][10]);
+        printf("x_output.data[%d]: %f\n", i, x_output.data[i][100]);
     }
 
 

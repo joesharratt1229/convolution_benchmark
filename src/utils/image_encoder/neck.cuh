@@ -153,6 +153,7 @@ void template_conv_and_bilinear_resid_new(x_tensor<T>& x_input,
                                                                                                 d_bias,
                                                                                                 x_input.dims[i],
                                                                                                 x_output.dims[i]);;
+
         if ((i > 1) && d_prev_features != NULL) {
             gpuErrchk(cudaDeviceSynchronize())
             T* d_top_down_features;
@@ -170,33 +171,34 @@ void template_conv_and_bilinear_resid_new(x_tensor<T>& x_input,
 
         }
 
+        gpuErrchk(cudaDeviceSynchronize());
+
+        size_t output_size = x_output.x_dim(i) * x_output.y_dim(i) * x_output.channels(i) * sizeof(T);
+        gpuErrchk(cudaMemcpy(x_output.data[i], d_x_output, output_size , cudaMemcpyDeviceToHost));
+        gpuErrchk(cudaMemcpy(pos_embeds.data[i], d_pos_embeds, output_size, cudaMemcpyDeviceToHost));
+
         if(d_prev_feature_storage != NULL) {
             cudaFree(d_prev_feature_storage);
         }
 
         if (i < neck_layer.size() - 1) { 
-            size_t output_size = x_output.x_dim(i) * x_output.y_dim(i) * x_output.channels(i) * sizeof(T);
             gpuErrchk(cudaMalloc((void**)&d_prev_feature_storage, output_size));
             gpuErrchk(cudaMemcpy(d_prev_feature_storage, d_x_output, output_size, cudaMemcpyDeviceToDevice));
             d_prev_features = d_prev_feature_storage;
         }
-
-        size_t output_size = x_output.x_dim(i) * x_output.y_dim(i) * x_output.channels(i) * sizeof(T);
-        
-        gpuErrchk(cudaMemcpy(x_output.data[i], d_x_output, output_size , cudaMemcpyDeviceToHost));
-        gpuErrchk(cudaMemcpy(pos_embeds.data[i], d_pos_embeds, output_size, cudaMemcpyDeviceToHost));
-        
-        cudaFree(d_weight);
-        cudaFree(d_bias);
-        cudaFree(d_x_input);
-        cudaFree(d_x_output);
-        cudaFree(d_pos_embeds);
 
     }
 
     if (d_prev_feature_storage != NULL) {
         cudaFree(d_prev_feature_storage);
     }
+
+
+    cudaFree(d_weight);
+    cudaFree(d_bias);
+    cudaFree(d_x_input);
+    cudaFree(d_x_output);
+    cudaFree(d_pos_embeds);
 }
 
 }
