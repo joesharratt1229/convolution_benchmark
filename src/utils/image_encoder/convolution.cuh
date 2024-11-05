@@ -101,26 +101,22 @@ __global__ void conv_2d_kernel_direct(T* d_input,
                                      Dimensions input_dims,
                                      Dimensions output_dims)
 {
-    using Config = TileConfig<kernel_size>;
+    using Config = TileConfig<kernel_size>;   
 
     unsigned int col = blockIdx.x * Config::TILE_SIZE + threadIdx.x;
     unsigned int row = blockIdx.y * Config::TILE_SIZE + threadIdx.y;
     unsigned int output_channel = blockIdx.z;
 
-    if (col >= output_dims.x_dimension || row >= output_dims.y_dimension || output_channel >= output_dims.num_channels) {
-        return;
-    }
-
     T sum = 0.0f;
 
-    if (col <= output_dims.x_dimension && row <= output_dims.y_dimension && output_channel <= output_dims.num_channels) {
+    if (col < output_dims.x_dimension && row < output_dims.y_dimension && output_channel < output_dims.num_channels) {
         #pragma unroll
         for (int i = 0; i < input_dims.num_channels; i++){
             #pragma unroll
             for (int y = 0; y < kernel_size; y++)
                 #pragma unroll
                 for (int x = 0; x < kernel_size; x++) {
-                    T filter_val = d_filters[output_dims.num_channels * (input_dims.num_channels * kernel_size * kernel_size) + 
+                    T filter_val = d_filters[output_channel * (input_dims.num_channels * kernel_size * kernel_size) + 
                         i * (kernel_size * kernel_size) + 
                         y * kernel_size + 
                         x];
