@@ -48,59 +48,44 @@ int main(int argc, char **argv) {
     const char *filename = "model.bin";
     read_weights_from_file(filename, &neck_layer);
 
-    x_tensor<floatT> x_input;
-    x_tensor<floatT> x_output;
-    x_tensor<floatT> pos_embeds;
+    XTensor<floatT>** x_input_arr = new XTensor<floatT>*[4];
+    XTensor<floatT>** x_output_arr = new XTensor<floatT>*[4];
+    XTensor<floatT>** pos_embeds_arr = new XTensor<floatT>*[4];
 
     int input_channels[4] = {model::Nin1, model::Nin2, model::Nin3, model::Nin4};
     int output_size = Nx;
 
-    for (int i = 0; i < x_input.size(); i++) {
+    for (int i = 0; i < 4; i++) {
+        floatT* data_buf = new floatT[input_channels[i] * output_size * output_size];
+        randomizeInput(data_buf, input_channels[i], output_size, output_size);
 
-        x_input.data[i] = (floatT*)malloc(model::Nin1 * output_size * output_size * sizeof(floatT));
+        Dimensions dims = {output_size, output_size, input_channels[i]};
+        x_input_arr[i] = new XTensor<floatT>(data_buf, dims);
 
-        if (x_input.data[i] == NULL) {
-            printf("Error allocating memory for x_input.data[%d]\n", i);
-            exit(1);
-        }
-        
-        x_input.set_dimensions(i, output_size, output_size, input_channels[i]);
-        randomizeInput(x_input.data[i], input_channels[i], output_size, output_size);
+        free(data_buf);
         output_size = 2 * output_size;
-
-        //printf("Input dimensions: %d %d %d\n", x_input.x_dim(i), x_input.y_dim(i), x_input.channels(i));
     }
 
     output_size = Nx;
 
-    for (int i = 0; i < x_output.size(); i++) {
-        x_output.data[i] = (floatT*)malloc(model::Nout * output_size * output_size * sizeof(floatT));
-        
-        if (x_output.data[i] == NULL) {
-            printf("Error allocating memory for x_output.data[%d]\n", i);
-            exit(1);
-        }
-        x_output.set_dimensions(i, output_size, output_size, model::Nout);
-        memset(x_output.data[i], 0, model::Nout * output_size * output_size * sizeof(floatT));
+    for (int i = 0; i < 4; i++) {
+        floatT* data_buf = new floatT[model::Nout * output_size * output_size];
+        Dimensions dims = {output_size, output_size, model::Nout};
+        x_output_arr[i] = new XTensor<floatT>(data_buf, dims);
+        memset(x_output_arr[i]->get(), 0, model::Nout * output_size * output_size * sizeof(floatT));
     
 
-        pos_embeds.data[i] = (floatT*)malloc(model::Nout * output_size * output_size * sizeof(floatT));
-
-        if (pos_embeds.data[i] == NULL) {
-            printf("Error allocating memory for pos_embeds.data[%d]\n", i);
-            exit(1);
-        }
-        pos_embeds.set_dimensions(i, output_size, output_size, model::Nout);
-        memset(pos_embeds.data[i], 0, model::Nout * output_size * output_size * sizeof(floatT));
+        floatT* pos_embeds_buf = new floatT[model::Nout * output_size * output_size];
+        pos_embeds_arr[i] = new XTensor<floatT>(pos_embeds_buf, dims);
+        memset(pos_embeds_arr[i]->get(), 0, model::Nout * output_size * output_size * sizeof(floatT));
         output_size = 2 * output_size;
-
-        //printf("Output dimensions: %d %d %d\n", x_output.x_dim(i), x_output.y_dim(i), x_output.channels(i));
     }
 
-    image_encoder::template_conv_and_bilinear_resid_new<floatT, 1>(x_input, x_output, pos_embeds, neck_layer);
+
+    image_encoder::template_conv_and_bilinear_resid_new<floatT, 1>(x_input_arr, x_output_arr, pos_embeds_arr, neck_layer);
 
     for (int i = 0; i < neck_layer.size(); i++) {
-        printf("x_output.data[%d]: %f\n", i, x_output.data[i][100]);
+        printf("x_output.data[%d]: %f\n", i, x_output_arr[i]->get()[100]);
     }
 
 

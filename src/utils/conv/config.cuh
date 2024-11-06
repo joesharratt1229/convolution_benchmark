@@ -58,7 +58,85 @@ struct Dimensions {
     int num_channels;
 };
 
+
 template <typename T>
+class XTensor {
+    private:
+        T* data;
+        Dimensions dims;
+        bool is_device_tensor;
+
+    public:
+        XTensor(const T* data, const Dimensions dims) : dims(dims)
+        {
+            this->data = (T*)malloc(size() * sizeof(T));
+            memcpy(this->data, data, size() * sizeof(T));
+        }
+
+        XTensor(const XTensor<T>& other, 
+                const Dimensions dims, 
+                cudaStream_t stream = 0, 
+                bool is_device_tensor = true, 
+                bool is_async = false) : dims(dims), is_device_tensor(is_device_tensor)
+        {
+            if (is_device_tensor && !is_async) {
+                gpuErrchk(cudaMalloc((void**)&this->data, size() * sizeof(T)));
+                gpuErrchk(cudaMemcpy(this->data, other.data, size() * sizeof(T), cudaMemcpyHostToDevice));
+            } else if (is_device_tensor && is_async) {
+                gpuErrchk(cudaMalloc((void**)&this->data, size() * sizeof(T)));
+                gpuErrchk(cudaMemcpyAsync(this->data, other.data, size() * sizeof(T), cudaMemcpyHostToDevice, stream));
+            } else {
+                this->data = (T*)malloc(size() * sizeof(T));
+                memcpy(this->data, other.data, size() * sizeof(T));
+            }
+        }
+
+        ~XTensor() {
+            cleanup();
+        }
+
+        size_t size() const noexcept {
+            return static_cast<size_t>(dims.x_dimension) * 
+                   static_cast<size_t>(dims.y_dimension) * 
+                   static_cast<size_t>(dims.num_channels);
+        }
+
+        Dimensions get_dims() const {
+            return dims;
+        }
+
+        int x_dim() const {
+            return dims.x_dimension;
+        }
+
+        int y_dim() const {
+            return dims.y_dimension;
+        }
+
+        int channels() const {
+            return dims.num_channels;
+        }
+
+        T* get() {
+            return data;
+        }
+
+private:
+    void cleanup() {
+        if (data) {
+            if (is_device_tensor) {
+                cudaFree(data);
+            } else {
+                free(data);
+            }
+            data = nullptr;
+        }
+    }
+};
+
+
+
+/*template <typename T>
 struct x_tensor {
     T* data[NUM_INPUTS];  // Array of pointers
 
@@ -99,5 +177,6 @@ struct x_tensor {
         return NUM_INPUTS;
     }
 };
+*/
 
 #endif

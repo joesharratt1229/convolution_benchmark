@@ -77,6 +77,7 @@ __global__ void conv_and_bilinear_resid_kernel(T* previous_input,
     __shared__ accFloatT d_dimensions_x;
     __shared__ accFloatT d_dimensions_y;
 
+
     if (col <= upper_scale_dims.x_dimension && row <= upper_scale_dims.y_dimension) {
         if (output_channel < upper_scale_dims.num_channels && threadIdx.x == 0 && threadIdx.y == 0)
         {
@@ -99,31 +100,26 @@ __global__ void conv_and_bilinear_resid_kernel(T* previous_input,
 }
 
 template<typename T, int kernel_size>
-void template_conv_and_bilinear_resid_new(x_tensor<T>& x_input, 
-                                          x_tensor<T>& x_output,
-                                          x_tensor<T>& pos_embeds,
+void template_conv_and_bilinear_resid_new(XTensor<T>** x_input, 
+                                          XTensor<T>** x_output,
+                                          XTensor<T>** pos_embeds,
                                           model::NeckLayer<T, model::Nin1, model::Nin2, model::Nin3, model::Nin4>& neck_layer)
 {   
 
-    x_tensor<T> d_x_input;
-    x_tensor<T> d_x_output;
-    x_tensor<T> d_pos_embeds;
+    XTensor<T>** d_x_input = new XTensor<T>*[4];
+    XTensor<T>** d_x_output = new XTensor<T>*[4];
+    XTensor<T>** d_pos_embeds = new XTensor<T>*[4];
 
     T* d_prev_features = NULL;
     T* d_prev_feature_storage = NULL;
 
     int output_channel = model::Nout;
-
     int input_channels[4] = {model::Nin1, model::Nin2, model::Nin3, model::Nin4};
 
     for (int i = 0; i < neck_layer.size(); i++) {
-        gpuErrchk(cudaMalloc((void**)&d_x_input.data[i], x_input.x_dim(i) * x_input.y_dim(i) * x_input.channels(i) * sizeof(T)));
-        gpuErrchk(cudaMalloc((void**)&d_x_output.data[i], x_output.x_dim(i) * x_output.y_dim(i) * x_output.channels(i) * sizeof(T)));
-        gpuErrchk(cudaMalloc((void**)&d_pos_embeds.data[i], pos_embeds.x_dim(i) * pos_embeds.y_dim(i) * pos_embeds.channels(i) * sizeof(T)));
-
-        gpuErrchk(cudaMemcpy(d_x_input.data[i], x_input.data[i], x_input.x_dim(i) * x_input.y_dim(i) * x_input.channels(i) * sizeof(T), cudaMemcpyHostToDevice));
-        gpuErrchk(cudaMemset(d_x_output.data[i], 0, x_output.x_dim(i) * x_output.y_dim(i) * x_output.channels(i) * sizeof(T)));
-        gpuErrchk(cudaMemset(d_pos_embeds.data[i], 0, pos_embeds.x_dim(i) * pos_embeds.y_dim(i) * pos_embeds.channels(i) * sizeof(T)));
+        d_x_input[i] = new XTensor<T>(*x_input[i], x_input[i]->get_dims(), 0, true);
+        d_x_output[i] = new XTensor<T>(*x_output[i], x_output[i]->get_dims(), 0, true);
+        d_pos_embeds[i] = new XTensor<T>(*pos_embeds[i], pos_embeds[i]->get_dims(), 0, true);
     }
 
     using Config = TileConfig<kernel_size>;
@@ -144,32 +140,34 @@ void template_conv_and_bilinear_resid_new(x_tensor<T>& x_input,
         gpuErrchk(cudaMemcpy(d_bias, bias, output_channel * sizeof(T), cudaMemcpyHostToDevice));
 
         dim3 threadsPerBlock(Config::TILE_SIZE, Config::TILE_SIZE, 1);
-        dim3 blocksPerGrid((x_output.x_dim(i) + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
-                           (x_output.y_dim(i) + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
-                           x_output.channels(i));
+        dim3 blocksPerGrid((x_output[i]->x_dim() + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
+                           (x_output[i]->y_dim() + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
+                           x_output[i]->channels());
 
-        image_encoder::conv_2d_kernel_direct<T, kernel_size><<<blocksPerGrid, threadsPerBlock>>>(d_x_input.data[i], 
-                                                                                                d_x_output.data[i],
+        image_encoder::conv_2d_kernel_direct<T, kernel_size><<<blocksPerGrid, threadsPerBlock>>>(d_x_input[i]->get(), 
+                                                                                                d_x_output[i]->get(),
                                                                                                 d_weight,
                                                                                                 d_bias,
-                                                                                                x_input.dims[i],
-                                                                                                x_output.dims[i]);;
+                                                                                                x_input[i]->get_dims(),
+                                                                                                x_output[i]->get_dims());;
 
         if ((i > 1) && d_prev_features != NULL) {
-            gpuErrchk(cudaDeviceSynchronize())
             T* d_top_down_features;
-            gpuErrchk(cudaMalloc((void**)&d_top_down_features, x_output.x_dim(i) * x_output.y_dim(i) * x_output.channels(i) * sizeof(T)));
-            gpuErrchk(cudaMemset(d_top_down_features, 0, x_output.x_dim(i) * x_output.y_dim(i) * x_output.channels(i) * sizeof(T)));
-            Dimensions lower_scale_dims = {x_output.x_dim(i)/2, x_output.y_dim(i)/2, x_output.channels(i)};
+            gpuErrchk(cudaMalloc((void**)&d_top_down_features, x_output[i]->x_dim() * x_output[i]->y_dim() * x_output[i]->channels() * sizeof(T)));
+            gpuErrchk(cudaMemset(d_top_down_features, 0, x_output[i]->x_dim() * x_output[i]->y_dim() * x_output[i]->channels() * sizeof(T)));
+            Dimensions lower_scale_dims = {x_output[i]->x_dim()/2, x_output[i]->y_dim()/2, x_output[i]->channels()};
 
             image_encoder::conv_and_bilinear_resid_kernel<T, kernel_size><<<blocksPerGrid, threadsPerBlock>>>(d_prev_features,
-                                                                                                              d_x_output.data[i],
+                                                                                                              d_x_output[i]->get(),
                                                                                                               d_top_down_features,
-                                                                                                              d_pos_embeds.data[i],
+                                                                                                              d_pos_embeds[i]->get(),
                                                                                                               lower_scale_dims,
-                                                                                                              x_output.dims[i]);
+                                                                                                              x_output[i]->get_dims());
             cudaFree(d_top_down_features);
-
+        } else {
+            image_encoder::pos_embedding_kernel<T, accFloatT><<<1, 1>>>(d_pos_embeds[i]->get(),
+                                                                        x_output[i]->x_dim(),
+                                                                        x_output[i]->y_dim());
         }
 
         gpuErrchk(cudaDeviceSynchronize());
@@ -179,9 +177,9 @@ void template_conv_and_bilinear_resid_new(x_tensor<T>& x_input,
         }
 
         if (i < neck_layer.size() - 1) { 
-            size_t output_size = x_output.x_dim(i) * x_output.y_dim(i) * x_output.channels(i) * sizeof(T);
+            size_t output_size = x_output[i]->x_dim() * x_output[i]->y_dim() * x_output[i]->channels() * sizeof(T);
             gpuErrchk(cudaMalloc((void**)&d_prev_feature_storage, output_size));
-            gpuErrchk(cudaMemcpy(d_prev_feature_storage, d_x_output.data[i], output_size, cudaMemcpyDeviceToDevice));
+            gpuErrchk(cudaMemcpy(d_prev_feature_storage, d_x_output[i]->get(), output_size, cudaMemcpyDeviceToDevice));
             d_prev_features = d_prev_feature_storage;
         }
 
@@ -194,17 +192,12 @@ void template_conv_and_bilinear_resid_new(x_tensor<T>& x_input,
     }
 
     for (int i = 0; i < neck_layer.size(); i++) {
-        size_t output_size = x_output.x_dim(i) * x_output.y_dim(i) * x_output.channels(i) * sizeof(T);
-        gpuErrchk(cudaMemcpy(x_output.data[i], d_x_output.data[i], output_size, cudaMemcpyDeviceToHost));
-        gpuErrchk(cudaMemcpy(pos_embeds.data[i], d_pos_embeds.data[i], output_size, cudaMemcpyDeviceToHost));
-
-        gpuErrchk(cudaFree(d_x_input.data[i]));
-        gpuErrchk(cudaFree(d_x_output.data[i]));
-        gpuErrchk(cudaFree(d_pos_embeds.data[i]));
+        size_t output_size = x_output[i]->x_dim() * x_output[i]->y_dim() * x_output[i]->channels() * sizeof(T);
+        gpuErrchk(cudaMemcpy(x_output[i]->get(), d_x_output[i]->get(), output_size, cudaMemcpyDeviceToHost));
+        gpuErrchk(cudaMemcpy(pos_embeds[i]->get(), d_pos_embeds[i]->get(), output_size, cudaMemcpyDeviceToHost));
     }
 
 
 }
-
 }
 #endif
