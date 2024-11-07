@@ -45,8 +45,8 @@ void pos_embed_cpu(T* h_output_cpu,
                 accFloatT y_embed = oy+1;
                 accFloatT x_embed = ox+1;
 
-                y_embed = y_embed/(output_dims.y_dimension + 1e-6) * SCALE;
-                x_embed = x_embed/(output_dims.x_dimension + 1e-6) * SCALE;
+                y_embed = y_embed/(output_dims.y_dimension + EPSILON) * SCALE;
+                x_embed = x_embed/(output_dims.x_dimension + EPSILON) * SCALE;
 
                 accFloatT power_term = 2*(floorf((nn)/2))/output_dims.num_channels;
                 accFloatT d_dimensions_x = std::pow(TEMPERATURE, power_term);
@@ -68,13 +68,19 @@ void pos_embed_cpu(T* h_output_cpu,
 
 
 
-template<typename T, int N_channels, int N_height, int N_width>
-void bilinear_interpolation_2x(T h_input[N_channels][N_height/2][N_width/2], 
-                               T h_backbone_output[N_channels][N_height][N_width], 
-                               T h_1x1_output[N_channels][N_height][N_width]) {
-    for (int nn = 0; nn < N_channels; nn++) {
-        for (int y = 0; y < N_height; y++) {
-            for (int x = 0; x < N_width; x++) {
+template<typename T>
+void bilinear_interpolation_2x(T* h_input,  
+                               T* h_1x1_output,
+                               Dimensions input_dims,
+                               Dimensions output_dims) {
+
+    T* h_backbone_output = new T[output_dims.num_channels * output_dims.y_dimension * output_dims.x_dimension];
+    assert(input_dims.x_dimension * 2 == output_dims.x_dimension);
+    assert(input_dims.y_dimension * 2 == output_dims.y_dimension);
+
+    for (int nn = 0; nn < output_dims.num_channels; nn++) {
+        for (int y = 0; y < output_dims.y_dimension; y++) {
+            for (int x = 0; x < output_dims.x_dimension; x++) {
 
                 accFloatT origx = static_cast<accFloatT>(x)/2;
                 accFloatT origy = static_cast<accFloatT>(y)/2;
@@ -82,21 +88,23 @@ void bilinear_interpolation_2x(T h_input[N_channels][N_height/2][N_width/2],
                 int x0 = static_cast<int>(floor(origx));
                 int y0 = static_cast<int>(floor(origy));
 
-                int x1 = min(x0+1, (N_width/2)-1);
-                int y1 = min(y0+1, (N_height/2)-1);
+                int x1 = std::min(x0+1, (input_dims.x_dimension)-1);
+                int y1 = std::min(y0+1, (input_dims.y_dimension)-1);
 
                 accFloatT dx = origx - x0;
                 accFloatT dy = origy - y0;
 
-                h_backbone_output[nn][y][x] = ((1-dx)*(1-dy) * static_cast<accFloatT>(h_input[nn][y0][x0]) + 
-                                               dx*(1-dy) * static_cast<accFloatT>(h_input[nn][y0][x1]) + 
-                                               (1-dx)*dy * static_cast<accFloatT>(h_input[nn][y1][x0]) + 
-                                               dx*dy * static_cast<accFloatT>(h_input[nn][y1][x1]));
+                h_backbone_output[nn * output_dims.y_dimension * output_dims.x_dimension + y * output_dims.x_dimension + x] = ((1-dx)*(1-dy) * static_cast<accFloatT>(h_input[nn * input_dims.y_dimension * input_dims.x_dimension + y0 * input_dims.x_dimension + x0]) + 
+                                               dx*(1-dy) * static_cast<accFloatT>(h_input[nn * input_dims.y_dimension * input_dims.x_dimension + y0 * input_dims.x_dimension + x1]) + 
+                                               (1-dx)*dy * static_cast<accFloatT>(h_input[nn * input_dims.y_dimension * input_dims.x_dimension + y1 * input_dims.x_dimension + x0]) + 
+                                               dx*dy * static_cast<accFloatT>(h_input[nn * input_dims.y_dimension * input_dims.x_dimension + y1 * input_dims.x_dimension + x1]));
                 
-                h_1x1_output[nn][y][x] += h_backbone_output[nn][y][x];
+                h_1x1_output[nn * output_dims.y_dimension * output_dims.x_dimension + y * output_dims.x_dimension + x] += h_backbone_output[nn * output_dims.y_dimension * output_dims.x_dimension + y * output_dims.x_dimension + x];
             }
         }
     }
+
+    delete[] h_backbone_output;
 }
 
 

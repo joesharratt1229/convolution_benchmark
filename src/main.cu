@@ -77,7 +77,6 @@ int main(int argc, char **argv) {
         Dimensions dims = {output_size, output_size, model::Nout};
         x_output_arr[i] = new XTensor<floatT>(data_buf, dims);
         memset(x_output_arr[i]->get(), 0, model::Nout * output_size * output_size * sizeof(floatT));
-    
 
         floatT* pos_embeds_buf = new floatT[model::Nout * output_size * output_size];
         pos_embeds_arr[i] = new XTensor<floatT>(pos_embeds_buf, dims);
@@ -97,16 +96,24 @@ int main(int argc, char **argv) {
 
     // Check output
     if (DEBUG) {
-        for (int i = 0; i < 1; i++) {
+        for (int i = 0; i < 4; i++) {
             floatT* weight = neck_layer.get_layer_runtime(i)->conv[0][0][0];
             floatT* bias = neck_layer.get_layer_runtime(i)->bias;
+            printf("Output dimensions: %d %d %d\n", x_output_arr_cpu[i]->get_dims().x_dimension, x_output_arr_cpu[i]->get_dims().y_dimension, x_output_arr_cpu[i]->get_dims().num_channels);
+
             convolution_cpu<floatT, 1>(x_input_arr[i]->get(), weight, bias, x_output_arr_cpu[i]->get(), x_input_arr[i]->get_dims(), x_output_arr_cpu[i]->get_dims());
 
-            i
-            pos_embed_cpu(pos_embeds_arr_cpu[i]->get(), pos_embeds_arr_cpu[i]->get_dims());
-            
-            checkOutput(x_output_arr[i]->get(), x_output_arr_cpu[i]->get(), model::Nout * Nx * Ny);
-            checkOutput(pos_embeds_arr[i]->get(), pos_embeds_arr_cpu[i]->get(), model::Nout * Nx * Ny);
+            if (i > 1 ) {
+                bilinear_interpolation_2x(x_output_arr_cpu[i-1]->get(), x_output_arr_cpu[i]->get(), x_output_arr_cpu[i-1]->get_dims(), x_output_arr_cpu[i]->get_dims());
+                pos_embed_cpu(pos_embeds_arr_cpu[i]->get(), pos_embeds_arr_cpu[i]->get_dims());
+            } else {
+                pos_embed_cpu(pos_embeds_arr_cpu[i]->get(), pos_embeds_arr_cpu[i]->get_dims());
+            }
+
+            printf("Iteration number: %d\n", i);
+            checkOutput(x_output_arr[i]->get(), x_output_arr_cpu[i]->get(), x_output_arr[i]->size());
+            printf("Pos embeds\n");
+            checkOutput(pos_embeds_arr[i]->get(), pos_embeds_arr_cpu[i]->get(), pos_embeds_arr[i]->size());
         }
     }
 

@@ -33,7 +33,6 @@ __device__ __forceinline__ accFloatT bilinear_interpolate(
 template<typename T, int kernel_size>
 __global__ void conv_and_bilinear_resid_kernel(T* previous_input,
                                                T* lateral_feature,
-                                               T* top_down_feature,
                                                T* pos_embeds,
                                                Dimensions lower_scale_dims,
                                                Dimensions upper_scale_dims)
@@ -46,7 +45,7 @@ __global__ void conv_and_bilinear_resid_kernel(T* previous_input,
     if (output_channel >= upper_scale_dims.num_channels || col >= upper_scale_dims.x_dimension || row >= upper_scale_dims.y_dimension)
         return;
 
-    if (col <= upper_scale_dims.x_dimension && row <= upper_scale_dims.y_dimension) {
+    if (col < upper_scale_dims.x_dimension && row < upper_scale_dims.y_dimension) {
         float origx = static_cast<float>(col)/2;
         float origy = static_cast<float>(row)/2;
 
@@ -59,8 +58,6 @@ __global__ void conv_and_bilinear_resid_kernel(T* previous_input,
         float dy = origy - y0;
 
         accFloatT value = bilinear_interpolate(previous_input, output_channel, x0, x1, y0, y1, dx, dy, lower_scale_dims);
-
-        top_down_feature[output_channel*upper_scale_dims.y_dimension*upper_scale_dims.x_dimension + row*upper_scale_dims.x_dimension + col] = static_cast<T>(value);
 
         lateral_feature[output_channel*upper_scale_dims.y_dimension*upper_scale_dims.x_dimension + row*upper_scale_dims.x_dimension + col] += static_cast<T>(value);
     }
@@ -75,8 +72,8 @@ __global__ void conv_and_bilinear_resid_kernel(T* previous_input,
     __shared__ accFloatT d_dimensions_y;
 
 
-    if (col <= upper_scale_dims.x_dimension && row <= upper_scale_dims.y_dimension) {
-        if (output_channel < upper_scale_dims.num_channels && threadIdx.x == 0 && threadIdx.y == 0)
+    if (col < upper_scale_dims.x_dimension && row < upper_scale_dims.y_dimension && output_channel < upper_scale_dims.num_channels) {
+        if (threadIdx.x == 0 && threadIdx.y == 0)
         {
             accFloatT power_term = 2*(floorf((output_channel)/2))/upper_scale_dims.num_channels;
             d_dimensions_x = std::pow(TEMPERATURE, power_term);
@@ -107,10 +104,7 @@ void template_conv_and_bilinear_resid_new(XTensor<T>** x_input,
     XTensor<T>** d_x_output = new XTensor<T>*[4];
     XTensor<T>** d_pos_embeds = new XTensor<T>*[4];
 
-    cudaStream_t streams[4];
-
-    T* d_prev_features = NULL;
-    T* d_prev_feature_storage = NULL;
+    cudaStream_t streams[5];
 
     int output_channel = model::Nout;
     int input_channels[4] = {model::Nin1, model::Nin2, model::Nin3, model::Nin4};
@@ -131,65 +125,42 @@ void template_conv_and_bilinear_resid_new(XTensor<T>** x_input,
         T* d_weight;
         T* d_bias;
 
+        dim3 threadsPerBlock(Config::TILE_SIZE, Config::TILE_SIZE, 1);
+        dim3 blocksPerGrid((x_output[i]->x_dim() + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
+                            (x_output[i]->y_dim() + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
+                            x_output[i]->channels());
+
         size_t weight_size = static_cast<size_t>(input_channels[i]) * output_channel * kernel_size * kernel_size;
 
         gpuErrchk(cudaMalloc((void**)&d_weight, weight_size * sizeof(T)));
         gpuErrchk(cudaMalloc((void**)&d_bias, output_channel * sizeof(T)));
 
-        gpuErrchk(cudaMemcpyAsync(d_weight, weight, weight_size * sizeof(T), cudaMemcpyHostToDevice, streams[i]));
-        gpuErrchk(cudaMemcpyAsync(d_bias, bias, output_channel * sizeof(T), cudaMemcpyHostToDevice, streams[i]));
+        gpuErrchk(cudaMemcpyAsync(d_weight, weight, weight_size * sizeof(T), cudaMemcpyHostToDevice, 0));
+        gpuErrchk(cudaMemcpyAsync(d_bias, bias, output_channel * sizeof(T), cudaMemcpyHostToDevice, 0));
 
-        dim3 threadsPerBlock(Config::TILE_SIZE, Config::TILE_SIZE, 1);
-        dim3 blocksPerGrid((x_output[i]->x_dim() + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
-                           (x_output[i]->y_dim() + Config::TILE_SIZE - 1) / Config::TILE_SIZE, 
-                           x_output[i]->channels());
+        image_encoder::conv_2d_kernel_direct<T, kernel_size><<<blocksPerGrid, threadsPerBlock, 0, 0>>>(d_x_input[i]->get(), 
+                                                                                                       d_x_output[i]->get(),
+                                                                                                       d_weight,
+                                                                                                       d_bias,
+                                                                                                       x_input[i]->get_dims(),
+                                                                                                       x_output[i]->get_dims());;
 
-        image_encoder::conv_2d_kernel_direct<T, kernel_size><<<blocksPerGrid, threadsPerBlock, 0, streams[i]>>>(d_x_input[i]->get(), 
-                                                                                                                d_x_output[i]->get(),
-                                                                                                                d_weight,
-                                                                                                                d_bias,
-                                                                                                                x_input[i]->get_dims(),
-                                                                                                                x_output[i]->get_dims());;
-
-        if ((i > 1) && d_prev_features != NULL) {
-            T* d_top_down_features;
-            gpuErrchk(cudaMalloc((void**)&d_top_down_features, x_output[i]->x_dim() * x_output[i]->y_dim() * x_output[i]->channels() * sizeof(T)));
-            gpuErrchk(cudaMemsetAsync(d_top_down_features, 0, x_output[i]->x_dim() * x_output[i]->y_dim() * x_output[i]->channels() * sizeof(T), streams[i]));
-            Dimensions lower_scale_dims = {x_output[i]->x_dim()/2, x_output[i]->y_dim()/2, x_output[i]->channels()};
-
-            image_encoder::conv_and_bilinear_resid_kernel<T, kernel_size><<<blocksPerGrid, threadsPerBlock, 0, streams[i]>>>(d_prev_features,
-                                                                                                                             d_x_output[i]->get(),
-                                                                                                                             d_top_down_features,
-                                                                                                                             d_pos_embeds[i]->get(),
-                                                                                                                             lower_scale_dims,
-                                                                                                                             x_output[i]->get_dims());
-            cudaFree(d_top_down_features);
+        if ((i > 1)) {
+            image_encoder::conv_and_bilinear_resid_kernel<T, kernel_size><<<blocksPerGrid, threadsPerBlock, 0, 0>>>(d_x_output[i-1]->get(),
+                                                                                                                               d_x_output[i]->get(),
+                                                                                                                               d_pos_embeds[i]->get(),
+                                                                                                                               x_output[i-1]->get_dims(),
+                                                                                                                               x_output[i]->get_dims());
         } else {
-            image_encoder::pos_embedding_kernel<T, accFloatT><<<blocksPerGrid, threadsPerBlock, 0, streams[i]>>>(d_pos_embeds[i]->get(),
-                                                                                                                 x_output[i]->get_dims());
-        }
-
-        gpuErrchk(cudaDeviceSynchronize());
-
-        if(d_prev_feature_storage != NULL) {
-            cudaFree(d_prev_feature_storage);
-        }
-
-        if (i < neck_layer.size() - 1) { 
-            size_t output_size = x_output[i]->x_dim() * x_output[i]->y_dim() * x_output[i]->channels() * sizeof(T);
-            gpuErrchk(cudaMalloc((void**)&d_prev_feature_storage, output_size));
-            gpuErrchk(cudaMemcpyAsync(d_prev_feature_storage, d_x_output[i]->get(), output_size, cudaMemcpyDeviceToDevice, streams[i+1]));
-            d_prev_features = d_prev_feature_storage;
+            image_encoder::pos_embedding_kernel<T, accFloatT><<<blocksPerGrid, threadsPerBlock, 0, 0>>>(d_pos_embeds[i]->get(),
+                                                                                                    d_pos_embeds[i]->get_dims());
         }
 
         gpuErrchk(cudaFree(d_weight));
         gpuErrchk(cudaFree(d_bias));
     }
 
-    if (d_prev_feature_storage != NULL) {
-        cudaFree(d_prev_feature_storage);
-    }
-
+    
     for (int i = 0; i < neck_layer.size(); i++) {
         size_t output_size = x_output[i]->x_dim() * x_output[i]->y_dim() * x_output[i]->channels() * sizeof(T);
         gpuErrchk(cudaMemcpyAsync(x_output[i]->get(), d_x_output[i]->get(), output_size, cudaMemcpyDeviceToHost, streams[i]));

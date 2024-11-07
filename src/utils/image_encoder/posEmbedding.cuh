@@ -26,7 +26,7 @@ __global__ void pos_embedding_kernel(T* pos_embeds,
     y_embed = y_embed/(output_dims.y_dimension + EPSILON) * SCALE;
     x_embed = x_embed/(output_dims.x_dimension + EPSILON) * SCALE;
 
-    if (pos_feat < output_dims.num_channels && x == 0 && y == 0)
+    if (pos_feat < output_dims.num_channels && threadIdx.x == 0 && threadIdx.y == 0)
     {
         accFloatT power_term = 2*(floorf((pos_feat)/2))/output_dims.num_channels;
         d_dimensions_x = std::pow(TEMPERATURE, power_term);
