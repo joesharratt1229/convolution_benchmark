@@ -64,6 +64,7 @@ class XTensor {
     private:
         T* data;
         Dimensions dims;
+        cudaStream_t stream;
         bool is_device_tensor;
 
     public:
@@ -73,11 +74,15 @@ class XTensor {
             memcpy(this->data, data, size() * sizeof(T));
         }
 
+        XTensor(const Dimensions dims) : dims(dims) {
+            this->data = (T*)malloc(size() * sizeof(T));
+        }
+
         XTensor(const XTensor<T>& other, 
                 const Dimensions dims, 
                 cudaStream_t stream = 0, 
                 bool is_device_tensor = true, 
-                bool is_async = false) : dims(dims), is_device_tensor(is_device_tensor)
+                bool is_async = false) : dims(dims), stream(stream), is_device_tensor(is_device_tensor)
         {
             if (is_device_tensor && !is_async) {
                 gpuErrchk(cudaMalloc((void**)&this->data, size() * sizeof(T)));

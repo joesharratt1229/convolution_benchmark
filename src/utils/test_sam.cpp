@@ -2,32 +2,70 @@
 #include <vector>
 #include <algorithm>
 
-template<typename T, int Nz_input, int Ny_input, int Nx_input, int Nz_output, int Ny_output, int Nx_output, int kernel_size>
-__host__
-void convolution_cpu(T h_input[Nz_input][Ny_input][Nx_input], 
-                     T h_filters[Nz_output][Nz_input][kernel_size][kernel_size], 
-                     T h_bias[Nz_output],
-                     T h_output_cpu[Nz_output][Ny_output][Nx_output]) {
+#include "utils/common.h"
+
+
+
+template<typename T, int kernel_size>
+void convolution_cpu(T* h_input, 
+                     T* h_filters, 
+                     T* h_bias,
+                     T* h_output_cpu,
+                     Dimensions input_dims,
+                     Dimensions output_dims) {
     using Config = TileConfig<kernel_size>;
 
-    for (int nn = 0; nn < Nz_output; ++nn) {
-        for (int oy = 0; oy < Ny_output; ++oy) {
-            for (int ox = 0; ox < Nx_output; ++ox) {
+    for (int nn = 0; nn < output_dims.num_channels; ++nn) {
+        for (int oy = 0; oy < output_dims.y_dimension; ++oy) {
+            for (int ox = 0; ox < output_dims.x_dimension; ++ox) {
                 T sum = 0.0f;
-                for (int ni = 0; ni < Nz_input; ++ni) {
+                for (int ni = 0; ni < input_dims.num_channels; ++ni) {
                     for (int ky = 0; ky < kernel_size; ++ky) {
                         for (int kx = 0; kx < kernel_size; ++kx) {
                             int iy = oy * Config::STRIDE + ky;
                             int ix = ox * Config::STRIDE + kx;
-                            sum += h_input[ni][iy][ix] * h_filters[nn][ni][ky][kx];
+                            sum += h_input[ni * input_dims.y_dimension * input_dims.x_dimension + iy * input_dims.x_dimension + ix] * h_filters[nn * input_dims.num_channels * kernel_size * kernel_size + ni * kernel_size * kernel_size + ky * kernel_size + kx];
                         }
                     }
                 }
-                h_output_cpu[nn][oy][ox] = sum + h_bias[nn];
+                h_output_cpu[nn * output_dims.y_dimension * output_dims.x_dimension + oy * output_dims.x_dimension + ox] = sum + h_bias[nn];
             }
         }
     }
 }
+
+
+template<typename T>
+void pos_embed_cpu(T* h_output_cpu,
+                   Dimensions output_dims) {
+
+    for (int nn = 0; nn < output_dims.num_channels; ++nn) {
+        for (int oy = 0; oy < output_dims.y_dimension; ++oy) {
+            for (int ox = 0; ox < output_dims.x_dimension; ++ox) {
+                accFloatT y_embed = oy+1;
+                accFloatT x_embed = ox+1;
+
+                y_embed = y_embed/(output_dims.y_dimension + 1e-6) * SCALE;
+                x_embed = x_embed/(output_dims.x_dimension + 1e-6) * SCALE;
+
+                accFloatT power_term = 2*(floorf((nn)/2))/output_dims.num_channels;
+                accFloatT d_dimensions_x = std::pow(TEMPERATURE, power_term);
+                accFloatT d_dimensions_y = std::pow(TEMPERATURE, power_term);
+
+                const bool is_even = nn%2 == 0;
+                const bool is_first_half = nn < output_dims.num_channels/2;
+                const accFloatT embed_val = is_first_half ? y_embed : x_embed;
+                const accFloatT dim = is_first_half ? d_dimensions_y : d_dimensions_x;
+
+                accFloatT val = is_even ? std::sin(embed_val / dim) : std::cos(embed_val / dim);
+                h_output_cpu[nn * output_dims.y_dimension * output_dims.x_dimension + oy * output_dims.x_dimension + ox] = static_cast<T>(val);
+            }
+        }
+    }
+}
+
+
+
 
 
 template<typename T, int N_channels, int N_height, int N_width>

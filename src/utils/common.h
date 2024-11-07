@@ -23,6 +23,10 @@
 #define nStreams 8
 #define WINDOW_EMBEDS 8
 
+#define EPSILON 1e-6
+#define TEMPERATURE 10000
+#define SCALE 2*M_PI
+
 typedef struct {
     int width;
     int height;
