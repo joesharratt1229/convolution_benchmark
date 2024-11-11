@@ -6,6 +6,7 @@
 #include "utils/conv/config.cuh"
 #include "utils/common.h"
 #include "utils/gpu_utils.cuh"
+#include "utils/conv/config.cuh"
 
 namespace image_encoder {
 
@@ -92,35 +93,42 @@ __global__ void conv_2d_kernel_shared(T* d_input,
 }
 
 
-template<typename T, int kernel_size, int in_channel_size, int out_channel_size>
+template<typename T, int kernel_size>
 __global__ void conv_2d_kernel_direct(T* d_input, 
                                      T* d_output,
-                                     T d_filters[out_channel_size][in_channel_size][kernel_size][kernel_size],
-                                     T d_bias[out_channel_size],
-                                     dims input_dims,
-                                     dims output_dims)
+                                     T* d_filters,
+                                     T* d_bias,
+                                     Dimensions input_dims,
+                                     Dimensions output_dims)
 {
-    using Config = TileConfig<kernel_size>;
+    using Config = TileConfig<kernel_size>;   
 
     unsigned int col = blockIdx.x * Config::TILE_SIZE + threadIdx.x;
     unsigned int row = blockIdx.y * Config::TILE_SIZE + threadIdx.y;
     unsigned int output_channel = blockIdx.z;
 
+    /*if (output_channel >= output_dims.num_channels || col >= output_dims.x_dimension || row >= output_dims.y_dimension) {
+        return;
+    }*/
+
     T sum = 0.0f;
 
-    if (col <= output_dims.width && row <= output_dims.height && output_channel <= out_channel_size) {
+    if (col < output_dims.x_dimension && row < output_dims.y_dimension && output_channel < output_dims.num_channels) {
         #pragma unroll
-        for (int i = 0; i < in_channel_size; i++){
+        for (int i = 0; i < input_dims.num_channels; i++){
             #pragma unroll
             for (int y = 0; y < kernel_size; y++)
                 #pragma unroll
                 for (int x = 0; x < kernel_size; x++) {
-                    T filter_val = d_filters[output_channel][i][y][x];
-                    sum += d_input[i * (output_dims.width * output_dims.height) + (row + y) * output_dims.width + (col + x)] * filter_val;
+                    T filter_val = d_filters[output_channel * (input_dims.num_channels * kernel_size * kernel_size) + 
+                        i * (kernel_size * kernel_size) + 
+                        y * kernel_size + 
+                        x];
+                    sum += d_input[i * (output_dims.x_dimension * output_dims.y_dimension) + (row + y) * output_dims.x_dimension + (col + x)] * filter_val;
                 }
         }
         
-        d_output[output_channel*output_dims.height*output_dims.width + row*output_dims.width + col] = sum + d_bias[output_channel];
+        d_output[output_channel*output_dims.y_dimension*output_dims.x_dimension + row*output_dims.x_dimension + col] = sum + d_bias[output_channel];
     } 
 
 }
