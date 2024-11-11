@@ -1,7 +1,11 @@
 #ifndef GPU_UTILS_CUH
 #define GPU_UTILS_CUH
 
+#define FULL_MASK 0xffffffff
+
 #include <cstdio>
+
+constexpr static int WARP_SIZE = 32;
 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true) {
     if (code != cudaSuccess) {
@@ -31,6 +35,24 @@ inline dim3 adjust_channel_size(dims dim, dim3 threadDims) {
                (target_waves*num_sms)/(x*y));
 }
 
+
+template <typename T>
+__device__ inline T tree_reduction_sum(T value)
+{
+    for (int i = 16; i > 0; i /= 2) {
+        value += __shfl_down_sync(FULL_MASK, value, i);
+    }
+    return value;
+}
+
+template <typename T>
+__device__ inline T tree_reduction_max(T value)
+{
+    for (int i = 16; i > 0; i /= 2) {
+        value = max(value, __shfl_down_sync(FULL_MASK, value, i));
+    }
+    return value;
+}
 
 namespace cuda_config {
     // For convolution kernel (2D spatial + channel)
