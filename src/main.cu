@@ -44,24 +44,27 @@ void randomizePosEmbeddings(T h_pos_embeds[NnDim][x_dim][y_dim]);
 int main(int argc, char **argv) {
     bool DEBUG = ((argc > 1) && (std::string(argv[1]) == "--debug"));
 
-    int seq_len = 16;
-    int embed_dim = 512;
-    int num_heads = 8;
+    constexpr int seq_len = 16;
+    constexpr int output_dim = 512;
+    constexpr int num_heads = 8;
+    constexpr int embed_dim = output_dim / num_heads;
 
     floatT* query = new floatT[num_heads * seq_len * embed_dim];
     floatT* key = new floatT[num_heads * seq_len * embed_dim];
     floatT* value = new floatT[num_heads * seq_len * embed_dim];
     floatT* output = new floatT[num_heads * seq_len * embed_dim];
+    floatT* output_cpu = new floatT[num_heads * seq_len * embed_dim];
 
     memset(output, 0, num_heads * seq_len * embed_dim * sizeof(floatT));
 
     randomizeInput(query, num_heads, seq_len, embed_dim);
     randomizeInput(key, num_heads, seq_len, embed_dim);
     randomizeInput(value, num_heads, seq_len, embed_dim);
+    flash_attention_kernel_wrapper<floatT, floatT, embed_dim, seq_len>(query, key, value, output, num_heads);
 
     if (DEBUG) {
-        multiHeadAttention_cpu(query, key, value, output, seq_len, embed_dim, num_heads);
-        printf("Output[0]: %f\n", output[0]);
+        multiHeadAttention_cpu(query, key, value, output_cpu, seq_len, embed_dim, num_heads);
+        checkOutput(output, output_cpu, num_heads * seq_len * embed_dim);
     }
 
     /*model::NeckLayer<floatT, model::Nin1, model::Nin2, model::Nin3, model::Nin4> neck_layer;
