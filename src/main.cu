@@ -11,6 +11,7 @@
 #include "utils/model.cuh"
 #include "utils/test_sam.cpp"
 #include "utils/conv/config.cuh"
+#include "utils/image_encoder/attention.cuh"
 
 using namespace std;
 
@@ -43,7 +44,27 @@ void randomizePosEmbeddings(T h_pos_embeds[NnDim][x_dim][y_dim]);
 int main(int argc, char **argv) {
     bool DEBUG = ((argc > 1) && (std::string(argv[1]) == "--debug"));
 
-    model::NeckLayer<floatT, model::Nin1, model::Nin2, model::Nin3, model::Nin4> neck_layer;
+    int seq_len = 16;
+    int embed_dim = 512;
+    int num_heads = 8;
+
+    floatT* query = new floatT[num_heads * seq_len * embed_dim];
+    floatT* key = new floatT[num_heads * seq_len * embed_dim];
+    floatT* value = new floatT[num_heads * seq_len * embed_dim];
+    floatT* output = new floatT[num_heads * seq_len * embed_dim];
+
+    memset(output, 0, num_heads * seq_len * embed_dim * sizeof(floatT));
+
+    randomizeInput(query, num_heads, seq_len, embed_dim);
+    randomizeInput(key, num_heads, seq_len, embed_dim);
+    randomizeInput(value, num_heads, seq_len, embed_dim);
+
+    if (DEBUG) {
+        multiHeadAttention_cpu(query, key, value, output, seq_len, embed_dim, num_heads);
+        printf("Output[0]: %f\n", output[0]);
+    }
+
+    /*model::NeckLayer<floatT, model::Nin1, model::Nin2, model::Nin3, model::Nin4> neck_layer;
 
     const char *filename = "model.bin";
     read_weights_from_file(filename, &neck_layer);
@@ -117,7 +138,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    return 0;
+    return 0; */
 } 
 
 

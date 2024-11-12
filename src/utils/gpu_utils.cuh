@@ -4,6 +4,8 @@
 #define FULL_MASK 0xffffffff
 
 #include <cstdio>
+#include <cuda_fp16.h>
+#include <limits>
 
 constexpr static int WARP_SIZE = 32;
 
@@ -52,6 +54,18 @@ __device__ inline T tree_reduction_max(T value)
         value = max(value, __shfl_down_sync(FULL_MASK, value, i));
     }
     return value;
+}
+
+template <typename accT>
+__device__ inline accT get_lowest() {
+    if (std::is_same<accT, float>::value) {
+        return -__FLT_MAX__;
+    } else if (std::is_same<accT, half>::value) {
+        return -65504.0f;  // Lowest representable half precision value
+    } else if (std::is_same<accT, double>::value) {
+        return -__DBL_MAX__;
+    }
+    return 0;  // Default case
 }
 
 namespace cuda_config {

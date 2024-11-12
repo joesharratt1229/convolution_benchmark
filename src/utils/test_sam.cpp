@@ -5,6 +5,78 @@
 #include "utils/common.h"
 
 
+template <typename T>
+void multiHeadAttention_cpu(T* query, T* key, T* value, T* output, int seq_len, int embed_dim, int num_heads) {
+    const int head_dim = embed_dim / num_heads;
+    const T scale = 1.0f / sqrt(static_cast<T>(head_dim));
+
+    T* scores = new T[num_heads * seq_len * seq_len];
+    T* temp_output = new T[seq_len * embed_dim];
+
+    // Process each attention head
+    for (int h = 0; h < num_heads; h++) {
+        // Calculate attention scores (Q * K^T)
+        for (int i = 0; i < seq_len; i++) {
+            for (int j = 0; j < seq_len; j++) {
+                T sum = 0;
+                for (int k = 0; k < head_dim; k++) {
+                    // New indexing: [head][seq][dim]
+                    int q_idx = (h * head_dim + k) * seq_len + i;
+                    int k_idx = (h * head_dim + k) * seq_len + j;
+                    sum += query[q_idx] * key[k_idx];
+                }
+                scores[h * (seq_len * seq_len) + i * seq_len + j] = sum * scale;
+            }
+        }
+
+        // Apply softmax row-wise
+        for (int i = 0; i < seq_len; i++) {
+            // Find max for numerical stability
+            T max_val = scores[h * (seq_len * seq_len) + i * seq_len];
+            for (int j = 1; j < seq_len; j++) {
+                max_val = std::max(max_val, 
+                    scores[h * (seq_len * seq_len) + i * seq_len + j]);
+            }
+
+            // Calculate exp and sum
+            T sum_exp = 0;
+            for (int j = 0; j < seq_len; j++) {
+                int score_idx = h * (seq_len * seq_len) + i * seq_len + j;
+                scores[score_idx] = exp(scores[score_idx] - max_val);
+                sum_exp += scores[score_idx];
+            }
+
+            // Normalize
+            for (int j = 0; j < seq_len; j++) {
+                int score_idx = h * (seq_len * seq_len) + i * seq_len + j;
+                scores[score_idx] /= sum_exp;
+            }
+        }
+
+        // Multiply with values
+        for (int i = 0; i < seq_len; i++) {
+            for (int d = 0; d < head_dim; d++) {
+                T sum = 0;
+                for (int j = 0; j < seq_len; j++) {
+                    int score_idx = h * (seq_len * seq_len) + i * seq_len + j;
+                    // New indexing: [head][seq][dim]
+                    int v_idx = (h * head_dim + d) * seq_len + j;
+                    sum += scores[score_idx] * value[v_idx];
+                }
+                // Output maintains the same format: [head][seq][dim]
+                temp_output[(h * head_dim + d) * seq_len + i] = sum;
+            }
+        }
+    }
+
+    // Copy to output
+    for (int i = 0; i < seq_len * embed_dim; i++) {
+        output[i] = temp_output[i];
+    }    
+
+    delete[] scores;
+    delete[] temp_output;
+}
 
 template<typename T, int kernel_size>
 void convolution_cpu(T* h_input, 
