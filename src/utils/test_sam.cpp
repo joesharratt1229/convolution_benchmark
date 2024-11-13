@@ -5,74 +5,74 @@
 #include "utils/common.h"
 
 
-template <typename T>
-void multiHeadAttention_cpu(T* query, T* key, T* value, T* output, int seq_len, int embed_dim, int num_heads) {
-    const int head_dim = embed_dim / num_heads;
-    const T scale = 1.0f / sqrt(static_cast<T>(head_dim));
+template <typename T, typename accT>
+void multiHeadAttention_cpu(T* query, T* key, T* value, T* output, 
+                           int seq_len, int embed_dim, int num_heads) {
+    const T scale = 1.0f / sqrt(static_cast<accT>(embed_dim));
 
     T* scores = new T[num_heads * seq_len * seq_len];
-    T* temp_output = new T[seq_len * embed_dim];
+    T* temp_output = new T[num_heads * seq_len * embed_dim];
 
     // Process each attention head
-    for (int h = 0; h < num_heads; h++) {
+    for (int head_id = 0; head_id < num_heads; head_id++) {
         // Calculate attention scores (Q * K^T)
-        for (int i = 0; i < seq_len; i++) {
+        for (int seq_id = 0; seq_id < seq_len; seq_id++) {
             for (int j = 0; j < seq_len; j++) {
                 T sum = 0;
-                for (int k = 0; k < head_dim; k++) {
-                    // New indexing: [head][seq][dim]
-                    int q_idx = (h * head_dim + k) * seq_len + i;
-                    int k_idx = (h * head_dim + k) * seq_len + j;
+                // Sum over embedding dimension
+                for (int d = 0; d < embed_dim; d++) {
+                    // Match GPU indexing: head_id * seq_len * embed_dim + seq_id * embed_dim + d
+                    int q_idx = head_id * seq_len * embed_dim + seq_id * embed_dim + d;
+                    int k_idx = head_id * seq_len * embed_dim + j * embed_dim + d;
                     sum += query[q_idx] * key[k_idx];
                 }
-                scores[h * (seq_len * seq_len) + i * seq_len + j] = sum * scale;
+                scores[head_id * seq_len * seq_len + seq_id * seq_len + j] = sum * scale;
             }
         }
 
         // Apply softmax row-wise
-        for (int i = 0; i < seq_len; i++) {
+        for (int seq_id = 0; seq_id < seq_len; seq_id++) {
             // Find max for numerical stability
-            T max_val = scores[h * (seq_len * seq_len) + i * seq_len];
+            T max_val = scores[head_id * seq_len * seq_len + seq_id * seq_len];
             for (int j = 1; j < seq_len; j++) {
                 max_val = std::max(max_val, 
-                    scores[h * (seq_len * seq_len) + i * seq_len + j]);
+                    scores[head_id * seq_len * seq_len + seq_id * seq_len + j]);
             }
 
             // Calculate exp and sum
-            T sum_exp = 0;
+            accT sum_exp = 0;
             for (int j = 0; j < seq_len; j++) {
-                int score_idx = h * (seq_len * seq_len) + i * seq_len + j;
+                int score_idx = head_id * seq_len * seq_len + seq_id * seq_len + j;
                 scores[score_idx] = exp(scores[score_idx] - max_val);
-                sum_exp += scores[score_idx];
+                sum_exp += static_cast<accT>(scores[score_idx]);
             }
 
             // Normalize
             for (int j = 0; j < seq_len; j++) {
-                int score_idx = h * (seq_len * seq_len) + i * seq_len + j;
+                int score_idx = head_id * seq_len * seq_len + seq_id * seq_len + j;
                 scores[score_idx] /= sum_exp;
             }
         }
 
         // Multiply with values
-        for (int i = 0; i < seq_len; i++) {
-            for (int d = 0; d < head_dim; d++) {
+        for (int seq_id = 0; seq_id < seq_len; seq_id++) {
+            for (int d = 0; d < embed_dim; d++) {
                 T sum = 0;
                 for (int j = 0; j < seq_len; j++) {
-                    int score_idx = h * (seq_len * seq_len) + i * seq_len + j;
-                    // New indexing: [head][seq][dim]
-                    int v_idx = (h * head_dim + d) * seq_len + j;
+                    int score_idx = head_id * seq_len * seq_len + seq_id * seq_len + j;
+                    // Match GPU value indexing
+                    int v_idx = head_id * seq_len * embed_dim + j * embed_dim + d;
                     sum += scores[score_idx] * value[v_idx];
                 }
-                // Output maintains the same format: [head][seq][dim]
-                temp_output[(h * head_dim + d) * seq_len + i] = sum;
+                // Output maintains same format as GPU: head_id * seq_len * embed_dim + seq_id * embed_dim + d
+                int out_idx = head_id * seq_len * embed_dim + seq_id * embed_dim + d;
+                temp_output[out_idx] = sum;
             }
         }
     }
 
     // Copy to output
-    for (int i = 0; i < seq_len * embed_dim; i++) {
-        output[i] = temp_output[i];
-    }    
+    memcpy(output, temp_output, num_heads * seq_len * embed_dim * sizeof(T));
 
     delete[] scores;
     delete[] temp_output;

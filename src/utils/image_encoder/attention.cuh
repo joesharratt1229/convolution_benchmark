@@ -20,6 +20,14 @@ __global__ void flash_attention_kernel(const T* query, const T* key, const T* va
     __shared__ T q_buf[embed_dim];
     __shared__ T qk_buf[seq_len];
     __shared__ T output_buf[embed_dim];
+    __shared__ accT max_val;
+    __shared__ accT row_sum;
+    __shared__ accT prev_val;
+
+    if (threadIdx.x == 0) {
+        max_val = -340282346638528859811704183484516925440.0f;
+        row_sum = 0;
+    }
 
     q_buf[threadIdx.x] = query[head_id * seq_len * embed_dim + seq_id * embed_dim + threadIdx.x];
     output_buf[threadIdx.x] = 0;
@@ -31,17 +39,13 @@ __global__ void flash_attention_kernel(const T* query, const T* key, const T* va
          if (i == 0) {
             qk_buf[i] = 0;
          }
+
     }
 
     __syncthreads();
 
-    accT row_sum = 0;
-    accT max_val = 340282346638528859811704183484516925440.0f;
-    max_val = -max_val;
-    accT prev_val;
-
     for (int i = 0; i < seq_len; i ++) {
-        accT value = q_buf[threadIdx.x] * k_buf[i * embed_dim + threadIdx.x];
+        accT value = q_buf[threadIdx.x] * k_buf[i * embed_dim + threadIdx.x] * scale;
         __syncwarp();
         accT sum = tree_reduction_sum(value);
         __syncthreads();
@@ -51,24 +55,31 @@ __global__ void flash_attention_kernel(const T* query, const T* key, const T* va
         }
 
         __syncthreads();
-
-        qk_buf[i] = qk_buf[i] * scale;
-
-        max_val = max(max_val, qk_buf[i]);
-
-        accT p = __expf(qk_buf[i] - max_val);
-
-        if (i == 0) {
-            row_sum = p;
-        } else {
-            row_sum = __expf(prev_val - max_val) * row_sum  + p;
-        }
-
-        output_buf[threadIdx.x] += (__expf(prev_val - max_val) * output_buf[threadIdx.x]) + (p * v_buf[i * embed_dim + threadIdx.x]);
-        prev_val = max_val;
     }
 
-    output[head_id * seq_len * embed_dim + seq_id * embed_dim + threadIdx.x] = output_buf[threadIdx.x]/row_sum;
+    if (threadIdx.x == 0) {
+        for (int i = 0; i < seq_len; i++) {
+            max_val = max(max_val, static_cast<accT>(qk_buf[i]));
+        }
+    }
+
+    __syncthreads();
+
+    if (threadIdx.x == 0) {
+        for (int i = 0; i < seq_len; i ++) {
+            row_sum += __expf(static_cast<accT>(qk_buf[i]) - max_val);
+        }
+    }
+
+    __syncthreads();
+
+    for (int i = 0; i < seq_len; i ++) {
+        accT attention_weight = __expf(static_cast<accT>(qk_buf[i]) - max_val)/row_sum;
+        output_buf[threadIdx.x] += static_cast<T>(attention_weight) * v_buf[i * embed_dim + threadIdx.x];
+    }
+
+
+    output[head_id * seq_len * embed_dim + seq_id * embed_dim + threadIdx.x] = output_buf[threadIdx.x];
 
 }
 

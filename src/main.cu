@@ -60,10 +60,10 @@ int main(int argc, char **argv) {
     randomizeInput(query, num_heads, seq_len, embed_dim);
     randomizeInput(key, num_heads, seq_len, embed_dim);
     randomizeInput(value, num_heads, seq_len, embed_dim);
-    flash_attention_kernel_wrapper<floatT, floatT, embed_dim, seq_len>(query, key, value, output, num_heads);
+    flash_attention_kernel_wrapper<floatT, accFloatT, embed_dim, seq_len>(query, key, value, output, num_heads);
 
     if (DEBUG) {
-        multiHeadAttention_cpu(query, key, value, output_cpu, seq_len, embed_dim, num_heads);
+        multiHeadAttention_cpu<floatT, accFloatT>(query, key, value, output_cpu, seq_len, embed_dim, num_heads);
         checkOutput(output, output_cpu, num_heads * seq_len * embed_dim);
     }
 
