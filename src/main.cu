@@ -44,8 +44,8 @@ void randomizePosEmbeddings(T h_pos_embeds[NnDim][x_dim][y_dim]);
 int main(int argc, char **argv) {
     bool DEBUG = ((argc > 1) && (std::string(argv[1]) == "--debug"));
 
-    constexpr int seq_len = 16;
-    constexpr int output_dim = 512;
+    constexpr int seq_len = 512;
+    constexpr int output_dim = 256;
     constexpr int num_heads = 8;
     constexpr int embed_dim = output_dim / num_heads;
 
