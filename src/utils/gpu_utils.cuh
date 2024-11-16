@@ -8,6 +8,8 @@
 #include <limits>
 
 constexpr static int WARP_SIZE = 32;
+constexpr static int NumWarps = 32;
+constexpr static int Tc = NumWarps;
 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true) {
     if (code != cudaSuccess) {
