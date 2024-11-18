@@ -44,10 +44,11 @@ void randomizePosEmbeddings(T h_pos_embeds[NnDim][x_dim][y_dim]);
 int main(int argc, char **argv) {
     bool DEBUG = ((argc > 1) && (std::string(argv[1]) == "--debug"));
 
-    constexpr int seq_len = 128;
+    constexpr int seq_len = 256;
     constexpr int output_dim = 256;
     constexpr int num_heads = 8;
     constexpr int embed_dim = output_dim / num_heads;
+    constexpr int warps_per_row = seq_len / 32;
 
     floatT* query = new floatT[num_heads * seq_len * embed_dim];
     floatT* key = new floatT[num_heads * seq_len * embed_dim];
@@ -60,14 +61,11 @@ int main(int argc, char **argv) {
     randomizeInput(query, num_heads, seq_len, embed_dim);
     randomizeInput(key, num_heads, seq_len, embed_dim);
     randomizeInput(value, num_heads, seq_len, embed_dim);
-    flash_attention_kernel_wrapper<floatT, accFloatT, embed_dim, seq_len>(query, key, value, output, num_heads);
+    flash_attention_kernel_wrapper<floatT, accFloatT, embed_dim, seq_len, warps_per_row>(query, key, value, output, num_heads);
     
 
     if (DEBUG) {
         multiHeadAttention_cpu<floatT, accFloatT>(query, key, value, output_cpu, seq_len, embed_dim, num_heads);
-        for (int i = 0; i < 10; i++) {
-            printf("%f %f\n", output[i], output_cpu[i]);
-        }
         checkOutput(output, output_cpu, num_heads * seq_len * embed_dim);
     }
 
