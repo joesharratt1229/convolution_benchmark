@@ -183,7 +183,7 @@ void checkOutput(T *h_output, T *h_output_cpu, unsigned int total_size) {
     for (int i = 0; i < total_size; i++) {
         float gpu_val = static_cast<float>(h_output[i]);
         float cpu_val = static_cast<float>(h_output_cpu[i]);
-        if (std::abs(gpu_val - cpu_val) > 1e-1) {
+        if (std::abs(gpu_val - cpu_val) > 1e-2) {
             printf("Mismatch at h_output[%d]: %f (CPU) vs %f (GPU)\n", i, cpu_val, gpu_val);
             exit(1);
         }
