@@ -66,7 +66,7 @@ int main(int argc, char **argv) {
     if (DEBUG) {
         multiHeadAttention_cpu<floatT, accFloatT>(query, key, value, output_cpu, seq_len, embed_dim, num_heads);
         for (int i = 0; i < 10; i++) {
-            printf("%f %f\n", output[1000 + i], output_cpu[1000 + i]);
+            printf("%f %f\n", output[i], output_cpu[i]);
         }
         checkOutput(output, output_cpu, num_heads * seq_len * embed_dim);
     }
