@@ -63,7 +63,11 @@ __device__ inline accT calculate_block_sum_row(accT warp_sum, int tid_x, int tid
 
 
 template <typename T, typename accT, int embed_dim, int seq_len, int block_y_dim, int warps_per_row>
-__global__ void flash_attention_kernel(const T* query, const T* key, const T* value, T* output, accT scale) {
+__global__ void flash_attention_kernel(const T* __restrict__ query, 
+                                       const T* __restrict__ key, 
+                                       const T* __restrict__ value, 
+                                       T* __restrict__ output, 
+                                       accT scale) {
     int tid = threadIdx.x + threadIdx.y * blockDim.x;
     int seq_id = threadIdx.x % seq_len;
     int query_seq_idx = (blockIdx.x * Tc * block_y_dim) + (threadIdx.y * Tc);
@@ -84,6 +88,7 @@ __global__ void flash_attention_kernel(const T* query, const T* key, const T* va
 
     __syncthreads();
 
+    #pragma unroll
     for (int q = 0; q < Tc; q++) {
         int buffer_idx = seq_id * block_y_dim + threadIdx.y;
         qk_buf[buffer_idx] = 0;
@@ -140,6 +145,7 @@ void flash_attention_kernel_wrapper(const T* query, const T* key, const T* value
 
     dim3 block_size(seq_len, block_y_dim);
     dim3 grid_size(Bc, num_heads);
+    printf("Number of threads: %d\n", max_threads_per_block*num_heads*Bc);
     flash_attention_kernel<T, accT, embed_dim, seq_len, block_y_dim, warps_per_row><<<grid_size, block_size>>>(d_query, d_key, d_value, d_output, scale);
 
     cudaError_t cudaStatus = cudaGetLastError();
