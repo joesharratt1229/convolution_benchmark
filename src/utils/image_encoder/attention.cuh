@@ -62,6 +62,77 @@ __device__ inline accT calculate_block_sum_row(accT warp_sum, int tid_x, int tid
 }
 
 
+template <typename T, typename accT, int embed_dim, int tile_seq_len, int seq_len, int block_y_dim, int warps_per_row>
+__global__ void scalable_flash_attention_kernel(const T* __restrict__ query, 
+                                                const T* __restrict__ key, 
+                                                const T* __restrict__ value, 
+                                                T* __restrict__ output, 
+                                                accT scale)
+{
+    int tid = threadIdx.x + threadIdx.y * blockDim.x;
+    int lane_id = threadIdx.x % WARP_SIZE;
+    int warp_id = threadIdx.y;
+
+    int head_id = blockIdx.y;
+    int query_seq_idx = (blockIdx.x * Tc * block_y_dim) + (threadIdx.y * Tc);
+
+    __shared__ T k_buf[WARP_SIZE * embed_dim];
+    __shared__ T v_buf[WARP_SIZE * embed_dim];
+    __shared__ accT qk_buf[WARP_SIZE * block_y_dim];
+
+    int total_elements = WARP_SIZE * embed_dim;
+    int num_threads = blockDim.x * blockDim.y;
+
+    accT threadMaxes[Tc];
+
+    for (int q = 0; q < Tc; q++) {
+        threadMaxes[q] = NEG_INFINITY;
+    }
+
+    for (int tile_start = 0; tile_start < seq_len; tile_start += (WARP_SIZE * embed_dim)) {
+        for (int idx = tid; idx < total_elements; idx += num_threads) {
+            int key_offset = head_id * seq_len * embed_dim + (tile_start + idx);
+            k_buf[idx] = key[key_offset];
+            v_buf[idx] = value[key_offset];
+        }
+
+        __syncthreads();
+
+        #pragma unroll
+        for (int q = 0; q < Tc; q++) {
+            int buffer_idx = warp_id * block_y_dim + threadIdx.y;
+            qk_buf[buffer_idx] = 0;
+
+            for (int i = 0; i < embed_dim; i++) {
+                qk_buf[buffer_idx] += static_cast<accT>(query[head_id * seq_len * embed_dim + (query_seq_idx + q) * embed_dim + i]) * static_cast<accT>(k_buf[seq_id * embed_dim + i]) * scale;
+            }
+
+            accT warp_max = tree_reduction_max(qk_buf[buffer_idx]);
+            accT p = __expf(qk_buf[buffer_idx] - warp_max);
+            accT warp_sum = tree_reduction_sum(p);
+
+            if (warp_max > threadMaxes[q]) {
+                threadMaxes[q] = warp_max;
+            }
+
+            accT rescaled_sum = warp_sum * __expf(warp_max - threadMaxes[q]);
+            accT rescaled_val = p * __expf(warp_max - threadMaxes[q]);
+            qk_buf[buffer_idx] = rescaled_val/(rescaled_sum);
+            accT output_val;
+            for (int d = 0; d < embed_dim; d++) {
+                output_val = qk_buf[buffer_idx] * static_cast<accT>(v_buf[seq_id * embed_dim + d]);
+                accT warp_sum = tree_reduction_sum(output_val);
+
+                if (threadIdx.x == 0) {
+                    output[head_id * seq_len * embed_dim + (query_seq_idx + q) * embed_dim + d] += static_cast<T>(warp_sum);
+                }
+            }
+        }
+
+}
+
+
+
 template <typename T, typename accT, int embed_dim, int seq_len, int block_y_dim, int warps_per_row>
 __global__ void flash_attention_kernel(const T* __restrict__ query, 
                                        const T* __restrict__ key, 
@@ -75,7 +146,7 @@ __global__ void flash_attention_kernel(const T* __restrict__ query,
 
     __shared__ T k_buf[seq_len * embed_dim];
     __shared__ T v_buf[seq_len * embed_dim];
-    __shared__ accT qk_buf[seq_len * block_y_dim];
+    __shared__ accT qk_buf[seq_len * block_y_dim];]
 
     int total_elements = seq_len * embed_dim;
     int num_threads = blockDim.x * blockDim.y;
